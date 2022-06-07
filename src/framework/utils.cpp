@@ -27,7 +27,7 @@ std::string CUtils::Base64Encode(const std::string& in)
     if (!ret)
         return "";
 
-    return std::move(std::string(out, ret));
+    return std::string(out, ret);
 }
 
 std::string CUtils::Base64Decode(const std::string& in)
@@ -48,7 +48,7 @@ std::string CUtils::Base64Decode(const std::string& in)
     BIO_free_all(b64);
     if (!ret)
         return "";
-    return std::move(std::string(out, ret));
+    return std::string(out, ret);
 }
 
 std::string CUtils::Sha1(const std::string& in)
@@ -60,14 +60,14 @@ std::string CUtils::Sha1(const std::string& in)
     for (int i = 0; i < SHA_DIGEST_LENGTH; i++) {
         sprintf(&mdString[i * 2], "%02x", (unsigned int)digest[i]);
     }
-    return std::move(std::string(mdString));
+    return std::string(mdString);
 }
 
 std::string CUtils::Sha1Raw(const std::string& in)
 {
     unsigned char digest[SHA_DIGEST_LENGTH];
     SHA1((const unsigned char*)in.c_str(), in.size(), (unsigned char*)&digest);
-    return std::move(std::string((char*)digest, sizeof(digest)));
+    return std::string((char*)digest, sizeof(digest));
 }
 
 std::string CUtils::Sha256Raw(const std::string& in)
@@ -77,7 +77,7 @@ std::string CUtils::Sha256Raw(const std::string& in)
     SHA256_Init(&ctx);
     SHA256_Update(&ctx, in.c_str(), in.length());
     SHA256_Final((unsigned char*)outputBuffer, &ctx);
-    return std::move(std::string((char*)outputBuffer, SHA256_DIGEST_LENGTH));
+    return std::string((char*)outputBuffer, SHA256_DIGEST_LENGTH);
 }
 
 std::string CUtils::Sha256(const std::string& in)
@@ -92,7 +92,7 @@ std::string CUtils::Sha256(const std::string& in)
     for (int i = 0; i < SHA256_DIGEST_LENGTH; i++) {
         sprintf(&hash[i * 2], "%02x", (unsigned int)outputBuffer[i]);
     }
-    return std::move(std::string(hash));
+    return std::string(hash);
 }
 
 std::string CUtils::HmacSha256(const std::string& in, const std::string& key)
@@ -100,7 +100,7 @@ std::string CUtils::HmacSha256(const std::string& in, const std::string& key)
     char outputBuffer[SHA256_DIGEST_LENGTH];
     unsigned int len = SHA256_DIGEST_LENGTH;
     HMAC(EVP_sha256(), key.c_str(), key.length(), (const unsigned char*)in.c_str(), in.length(), (unsigned char*)outputBuffer, &len);
-    return std::move(std::string(outputBuffer, SHA256_DIGEST_LENGTH));
+    return std::string(outputBuffer, SHA256_DIGEST_LENGTH);
 }
 
 std::string CUtils::Md5(const std::string& in)
@@ -111,6 +111,6 @@ std::string CUtils::Md5(const std::string& in)
     for (std::uint32_t i = 0; i < 16; ++i) {
         len += snprintf(token + len, sizeof(token), "%02x", md[i]);
     }
-    return std::move(std::string(token, len));
+    return std::string(token, len);
 }
 NAMESPACE_FRAMEWORK_END

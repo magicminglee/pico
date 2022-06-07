@@ -38,7 +38,7 @@ void CService::InitSignal()
         SIGTERM, EV_SIGNAL | EV_PERSIST, nullptr, [this]() -> void {
             this->Stopping();
         });
-#ifdef LINUX_PLATFORMOS
+#if defined(LINUX_PLATFORMOS) || defined(DARWIN_PLATFORMOS)
     CWorker::MAIN_CONTEX->Register(
         SIGHUP, EV_SIGNAL | EV_PERSIST, nullptr, []() -> void {});
     CWorker::MAIN_CONTEX->Register(
@@ -88,7 +88,7 @@ void CService::Destroy()
 
 void CService::Reload()
 {
-    MYARGS.ParseYaml();
+    MYARGS.ParseYaml1();
     Init();
 }
 

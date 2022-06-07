@@ -38,7 +38,7 @@ namespace mongo {
             CINFO("CTX:%s on_command_failed operationid:%ld requestid:%ld duration:%ld failure:%s", MYARGS.CTXID.c_str(), event.operation_id(), event.request_id(), event.duration(), event.failure().data());
         });
         m_client_opts.apm_opts(apm_opts);
-        m_pool = std::move(mongocxx::stdx::make_unique<mongocxx::pool>(std::move(muri), m_client_opts));
+        m_pool = mongocxx::stdx::make_unique<mongocxx::pool>(std::move(muri), m_client_opts);
         return m_pool != nullptr;
     }
 }

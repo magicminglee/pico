@@ -25,12 +25,12 @@ int32_t CHttp::Process(const char* data, const unsigned int dlen)
     size_t num_headers = MAX_HEADER_NUM;
     int32_t ret = phr_parse_request(data, dlen, &method, &method_len, &path, &path_len, &m_minor_version, headers, &num_headers, 0);
     if (ret > 0) {
-        m_method = std::move(std::string(method, method_len));
+        m_method = std::string(method, method_len);
 
         m_headers.clear();
         for (size_t i = 0; i < num_headers; ++i) {
-            m_headers.insert(std::make_pair(CStringTool::ToLower(std::move(std::string(headers[i].name, headers[i].name_len))),
-                std::move(std::string(headers[i].value, headers[i].value_len))));
+            m_headers.insert(std::make_pair(CStringTool::ToLower(std::string(headers[i].name, headers[i].name_len)),
+                std::string(headers[i].value, headers[i].value_len)));
         }
 
         if (auto v = m_headers.find("content-length"); v != m_headers.end()) {
@@ -38,7 +38,7 @@ int32_t CHttp::Process(const char* data, const unsigned int dlen)
             if (dlen < cl + ret) {
                 return -2; // partial data
             } else {
-                m_data = std::move(std::string(data + ret, cl));
+                m_data = std::string(data + ret, cl);
                 ret += cl; // complete data
             }
         } else {
@@ -55,7 +55,7 @@ int32_t CHttp::Process(const char* data, const unsigned int dlen)
             for (auto& v : vec1) {
                 auto vec2 = CStringTool::Split(v, "=");
                 if (vec2.size() == 2) {
-                    m_querys[std::move(std::string(vec2[0].data(), vec2[0].size()))] = std::string(vec2[1].data(), vec2[1].size());
+                    m_querys[std::string(vec2[0].data(), vec2[0].size())] = std::string(vec2[1].data(), vec2[1].size());
                 }
             }
             free(decodestr);
@@ -77,9 +77,9 @@ std::string_view CHttp::Frame(const void* data, const uint32_t dlen)
         const char* header = "HTTP/1.1 200 OK\r\nServer: TxServer/1.31.4\r\nContent-Type: application/json\r\nContent-Length: %u\r\n\r\n";
         offset = snprintf(buffer, MAX_WATERMARK_SIZE, header, dlen);
     }
-    CheckCondition(offset + dlen < MAX_WATERMARK_SIZE, std::move(std::string_view()));
+    CheckCondition(offset + dlen < MAX_WATERMARK_SIZE, std::string_view());
     memcpy(buffer + offset, data, dlen);
-    return std::move(std::string_view(buffer, dlen + offset));
+    return std::string_view(buffer, dlen + offset);
 }
 
 const std::optional<std::string_view> CHttp::Header(const std::string& key)

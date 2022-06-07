@@ -106,13 +106,13 @@ private:
         if (len >= sizeof(MsgData)) {
             MsgData* msg = (MsgData*)srcpackbuf;
             evbuffer_copyout(input, msg, sizeof(MsgData));
-            CheckCondition(len >= sizeof(MsgData) + msg->size, std::move(std::make_tuple(std::nullopt, std::nullopt)));
-            CheckCondition(CHANNEL_MAX_PACKET_LENGTH >= msg->size + sizeof(MsgData), std::move(std::make_tuple(std::nullopt, std::nullopt)));
+            CheckCondition(len >= sizeof(MsgData) + msg->size, std::make_tuple(std::nullopt, std::nullopt));
+            CheckCondition(CHANNEL_MAX_PACKET_LENGTH >= msg->size + sizeof(MsgData), std::make_tuple(std::nullopt, std::nullopt));
 
             evbuffer_remove(input, msg, msg->size + sizeof(MsgData));
-            return std::move(std::make_tuple(msg->type, std::string_view(msg->data, msg->size)));
+            return std::make_tuple(msg->type, std::string_view(msg->data, msg->size));
         }
-        return std::move(std::make_tuple(std::nullopt, std::nullopt));
+        return std::make_tuple(std::nullopt, std::nullopt);
     }
 
     bool write(bool left_or_right, const MsgType type, std::string_view data)

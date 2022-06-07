@@ -8,7 +8,7 @@ main:
   #By default Service does not run as a daemon. Use true if you need it.
   daemonize: False
   #Specify the log directory.
-  logdir: "/mnt/d/codes/3dgames/pico/src/build/"
+  logdir: "/Volumes/MacintoshData/codes/pico/src/build/"
   #Specify the server verbosity level(DEBUG INFO TRACE WARN ERROR)
   loglevel: "DEBUG"
   #Print log to teminal

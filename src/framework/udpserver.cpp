@@ -112,8 +112,10 @@ bool CUDPServer::setOption()
     struct linger ling = { 0, 0 };
     error = ::setsockopt(m_listenfd, SOL_SOCKET, SO_LINGER, (void*)&ling, sizeof(ling));
     CheckCondition(0 == error, false);
+#ifdef LINUX_PLATFORMOS
     error = ::setsockopt(m_listenfd, IPPROTO_UDP, TCP_NODELAY, (void*)&flags, sizeof(flags));
     CheckCondition(0 == error, false);
+#endif
     error = ::setsockopt(m_listenfd, SOL_SOCKET, SO_RCVBUF, &UDP_SOCKET_RCEIVEBUF_SIZE, sizeof(UDP_SOCKET_RCEIVEBUF_SIZE));
     CheckCondition(0 == error, false);
     int32_t revbuf = 0;

@@ -48,7 +48,6 @@ class CDecoder<XGAMEInternalHeader> : public CObject {
 public:
     CDecoder(const char* data, const uint32_t dlen)
         : m_data(data)
-        , m_dlen(dlen)
     {
     }
     std::tuple<bool, uint32_t, const char*, uint32_t, int64_t> Decode()
@@ -59,7 +58,6 @@ public:
 
 private:
     const char* m_data;
-    uint32_t m_dlen;
     DISABLE_CLASS_COPYABLE(CDecoder);
 };
 

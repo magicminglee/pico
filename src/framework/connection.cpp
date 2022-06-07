@@ -191,7 +191,7 @@ void CConnectionMgr::ForEach(std::function<bool(CConnection*)> cb)
 std::optional<CConnection*> CConnectionMgr::GetTaskById(const uint64_t id)
 {
     ContainerT::iterator e = m_mgr.find(id);
-    return e != m_mgr.end() ? std::move(std::optional(e->second)) : std::nullopt;
+    return e != m_mgr.end() ? std::optional(e->second) : std::nullopt;
 }
 
 std::optional<CConnection*> CConnectionMgr::GetTaskByType(const uint16_t type, const uint64_t key)
@@ -203,7 +203,7 @@ std::optional<CConnection*> CConnectionMgr::GetTaskByType(const uint16_t type, c
 
     static thread_local uint32_t ROUND_ROBIN = 0;
     size_t idx = key > 0 ? key : ROUND_ROBIN++;
-    return vec.empty() ? std::nullopt : std::move(std::optional(vec[idx % vec.size()].second));
+    return vec.empty() ? std::nullopt : std::optional(vec[idx % vec.size()].second);
 }
 
 std::vector<CConnection*> CConnectionMgr::GetAllTaskByType(const uint16_t type)

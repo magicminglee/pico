@@ -15,7 +15,7 @@ public:
         std::vector<std::string_view> res;
         for (size_t b = 0, e = 0; e != std::string_view::npos;) {
             e = sv.find(sp, b);
-            res.push_back(std::move(std::string_view(sv.data() + b, e == std::string_view::npos ? sv.size() - b : e - b)));
+            res.push_back(std::string_view(sv.data() + b, e == std::string_view::npos ? sv.size() - b : e - b));
             b = e + sp.size();
         }
         return res;
@@ -54,14 +54,14 @@ public:
         std::string_view sv = src;
         for (size_t b = 0, e = 0; e != std::string_view::npos;) {
             e = sv.find(sp, b);
-            res.push_back(std::move(std::string_view(sv.data() + b, e == std::string_view::npos ? sv.size() - b : e - b)));
+            res.push_back(std::string_view(sv.data() + b, e == std::string_view::npos ? sv.size() - b : e - b));
             b = e + sp.size();
         }
         for (auto& v : res) {
             v.copy(buf + len, v.size(), 0);
             len += v.size();
         }
-        src = std::move(std::string(buf, len));
+        src = std::string(buf, len);
     }
 
     template <class... Args>
@@ -72,19 +72,19 @@ public:
         if (size <= 0 || size > sizeof(buf)) {
             throw std::runtime_error("Error during formatting.");
         }
-        return std::move(std::string(buf, size));
+        return std::string(buf, size);
     }
 
     static std::string ToUpper(std::string str)
     {
         std::transform(str.begin(), str.end(), str.begin(), ::toupper);
-        return std::move(str);
+        return str;
     }
 
     static std::string ToLower(std::string str)
     {
         std::transform(str.begin(), str.end(), str.begin(), ::tolower);
-        return std::move(str);
+        return str;
     }
 
     DISABLE_CLASS_COPYABLE(CStringTool);
