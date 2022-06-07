@@ -1,0 +1,65 @@
+#main thread
+main:
+  #Service unique identifier
+  type: 3
+  id: 1
+  #Specify timezone(default CST)
+  timezone: "/usr/share/zoneinfo/UTC"
+  #By default Service does not run as a daemon. Use true if you need it.
+  daemonize: False
+  #Specify the log directory.
+  logdir: "/mnt/d/codes/3dgames/pico/src/build/"
+  #Specify the server verbosity level(DEBUG INFO TRACE WARN ERROR)
+  loglevel: "DEBUG"
+  #Print log to teminal
+  verbose: true
+  #Split log file when file is larger than 64MB
+  isolate: true
+  certificatefile: "../config/server.crt"
+  privatekeyfile: "../config/server.key"
+  #Setup allow origin
+  alloworigin: true
+  #Log module name
+  modulename: "pico"
+  #Config host
+  confhost: "ws://*:9700"
+  #heartbeat interval(s)
+  interval: 5
+  #veverdat apikey
+  apikey: "tXv8@kk!-INDIBET-PROD"
+
+#worker thread
+workers: [
+    {
+      #hosts: ["ws://*:9015", "udp://zzjs888.com:13000"],
+      hosts: ["http://*:9016", "ws://*:9015"],
+      inhosts: "ws://*:9723",
+      subhosts: ["ws://feed.decimalcricket.com/api/match/feed"],
+    },
+  ]
+# workers: [
+#     {
+#       #hosts: ["ws://*:9015", "udp://zzjs888.com:13000"],
+#       hosts: [],
+#       inhosts: "ws://*:9810",
+#       subhosts: ["ws://feed.decimalcricket.com/api/match/feed"],
+#     },
+#     {
+#       #hosts: ["ws://*:9015", "udp://zzjs888.com:13000"],
+#       hosts: [],
+#       inhosts: "ws://*:9811",
+#       subhosts: ["ws://feed.decimalcricket.com/api/match/feed"],
+#     },
+#     {
+#       #hosts: ["ws://*:9015", "udp://zzjs888.com:13000"],
+#       hosts: [],
+#       inhosts: "ws://*:9812",
+#       subhosts: ["ws://feed.decimalcricket.com/api/match/feed"],
+#     },
+#     {
+#       #hosts: ["ws://*:9015", "udp://zzjs888.com:13000"],
+#       hosts: [],
+#       inhosts: "ws://*:9813",
+#       subhosts: ["ws://feed.decimalcricket.com/api/match/feed"],
+#     },
+#   ]
