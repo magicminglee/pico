@@ -27,6 +27,15 @@ main:
   interval: 5
   #veverdat apikey
   apikey: "tXv8@kk!-INDIBET-PROD"
+  mongourl: "mongodb://GAME:game12345@poker.demo.mongodb:5100,poker.demo.mongodb:5101,poker.demo.mongodb:5102/?authSource=admin&replicaSet=poker_demo"
+  dbconf:
+    [
+      {
+        "dbname": "infomation_888",
+        "collection":
+          ["league", "event", "team", "player", "innings", "over", "ballinfo"],
+      },
+    ]
 
 #worker thread
 workers: [

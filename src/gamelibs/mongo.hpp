@@ -34,9 +34,9 @@ USE_NAMESPACE_FRAMEWORK
 
 namespace gamelibs {
 namespace mongo {
-    inline thread_local mongocxx::v_noabi::client* MongoCtx = nullptr;
-    //mongodb connection pool encapsulated
+    // mongodb connection pool encapsulated
     using connection = mongocxx::pool::entry;
+    inline thread_local std::unique_ptr<connection> MongoCtx = nullptr;
     class CMongo : public CSingleton<CMongo> {
     public:
         CMongo();
@@ -47,10 +47,16 @@ namespace mongo {
             return m_pool->acquire();
         }
 
+        bool GetOne()
+        {
+            MongoCtx = std::make_unique<connection>(m_pool->acquire());
+            return true;
+        }
+
     private:
         mongocxx::instance m_inst;
         mongocxx::options::client m_client_opts;
         std::unique_ptr<mongocxx::pool> m_pool = nullptr;
     };
 }
-} //end namespace mongo
+} // end namespace mongo

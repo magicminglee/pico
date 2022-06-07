@@ -9,6 +9,7 @@
 #include "framework/global.hpp"
 #include "framework/http.hpp"
 #include "framework/msgparser.hpp"
+#include "framework/protocol.hpp"
 #include "framework/random.hpp"
 #include "framework/service.hpp"
 #include "framework/signal.hpp"
@@ -19,10 +20,10 @@
 #include "framework/utils.hpp"
 #include "framework/websocket.hpp"
 #include "framework/worker.hpp"
-#include "framework/protocol.hpp"
 #include "framework/xlog.hpp"
 
 #include "gamelibs/httpcli.hpp"
+#include "gamelibs/mongo.hpp"
 #include "gamelibs/redis.hpp"
 
 #include "nlohmann/json.hpp"
@@ -31,6 +32,7 @@ USE_NAMESPACE_FRAMEWORK
 
 using namespace gamelibs::redis;
 using namespace gamelibs::httpcli;
+using namespace gamelibs::mongo;
 
 class ExternalTCPConnectionMgr : public CConnectionMgr,
                                  public CTLSingleton<ExternalTCPConnectionMgr> {
@@ -57,11 +59,10 @@ public:
 class InternalMsgParser : public CMsgParser,
                           public CTLSingleton<InternalMsgParser> {
 public:
-    
     virtual bool Init() final
     {
         CheckCondition(!GetSize(), true);
-        
+
         return true;
     }
 };
@@ -79,6 +80,7 @@ public:
             MYARGS.CTXID.c_str(), Id(), j.dump().c_str(),
             MYARGS.LogDir.value().c_str());
 
+        CheckCondition(CMongo::Instance().GetOne(), false);
         CheckCondition(ExternalMsgParser::Instance().Init(), false);
         CheckCondition(InternalMsgParser::Instance().Init(), false);
         CheckCondition(CRedisMgr::Instance().Init(), false);
@@ -103,6 +105,10 @@ public:
             },
             nullptr);
 
+        auto v = (*MongoCtx)->list_database_names();
+        for (auto& vv : v) {
+            CINFO("DB:%s", vv.c_str());
+        }
         return true;
     }
 };
@@ -120,6 +126,7 @@ public:
             nullptr,
             nullptr);
 
+        CheckCondition(CMongo::Instance().Init(MYARGS.MongoUrl.value()), false);
 #ifdef PLATFORMOS
         CINFO("Service has been initiated on platfrom %s", PLATFORMOS);
 #endif
