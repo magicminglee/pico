@@ -88,7 +88,7 @@ void CService::Destroy()
 
 void CService::Reload()
 {
-    MYARGS.ParseYaml1();
+    MYARGS.ParseYaml();
     Init();
 }
 
