@@ -75,14 +75,14 @@ public:
         // External Connection
         for (auto& v : MYARGS.Workers[Id()].Host) {
             auto [schema, hostname, port] = CConnection::SplitUri(v);
-            schema = CConnection::GetRealSchema(schema);
-            if (schema == "http" || schema == "https") {
+            auto schem = CConnection::GetRealSchema(schema);
+            if (schem == "http" || schem == "https") {
                 m_http_server.push_back(std::make_shared<CHTTPServer>());
                 auto ref = m_http_server.back();
                 if (auto ret = ref->Init(
                         v,
-                        [schema](CConnection* c) {
-                            CINFO("CTX:%s new %s conection connected", MYARGS.CTXID.c_str(), schema.c_str());
+                        [schem](CConnection* c) {
+                            CINFO("CTX:%s new %s conection connected", MYARGS.CTXID.c_str(), schem.c_str());
                         });
                     !ret) {
                     CERROR("CTX:%s init worker init host %s", MYARGS.CTXID.c_str(), v.c_str());
