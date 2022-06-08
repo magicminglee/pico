@@ -8,7 +8,7 @@ main:
   #By default Service does not run as a daemon. Use true if you need it.
   daemonize: False
   #Specify the log directory.
-  logdir: "/Volumes/MacintoshData/codes/pico/src/build/"
+  logdir: "/mnt/d/codes/3dgames/pico/src/build/mylog/"
   #Specify the server verbosity level(DEBUG INFO TRACE WARN ERROR)
   loglevel: "DEBUG"
   #Print log to teminal
@@ -41,7 +41,7 @@ main:
 workers: [
     {
       #hosts: ["ws://*:9015", "udp://zzjs888.com:13000"],
-      hosts: ["http://*:9016", "ws://*:9015"],
+      hosts: ["http://*:8080", "https://*:8443"],
       inhosts: "ws://*:9723",
       subhosts: ["ws://feed.decimalcricket.com/api/match/feed"],
     },

@@ -47,6 +47,7 @@ public:
     constexpr bool IsValide() { return nullptr != m_bev; }
     bool IsStreamType(const StreamType type) { return m_st == type; }
     void SetStreamTypeBySchema(const std::string& schema);
+    void SetBufferEvent(bufferevent* bv) { m_bev = bv; }
     constexpr CConnectionHandler* Handler() { return m_handler; }
     const char* PeerIp() { return m_peer_ip.c_str(); }
     const uint16_t PeerPort() { return m_peer_port; }

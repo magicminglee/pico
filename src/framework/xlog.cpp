@@ -1,8 +1,8 @@
 #include <algorithm>
 
-#include <filesystem>
 #include <chrono>
 #include <errno.h>
+#include <filesystem>
 #include <iomanip>
 #include <optional>
 #include <ratio>
@@ -105,9 +105,9 @@ bool LogWriter::LogInit(XGAMELogLevel l, const char* dirpath, const char* module
         fprintf(stderr, "cannot open log file,file location is %s\n", filelocation);
         return false;
     }
-    setvbuf(fp, LogWriter::m_buffer, _IOLBF, M_LOG_BUFFSIZE); //buf set _IONBF  _IOLBF  _IOFBF
-    //setvbuf (fp,  (char *)nullptr, _IOLBF, 0);
-    //fprintf(stderr, "now all the running-information are going to the file %s\n", filelocation);
+    setvbuf(fp, LogWriter::m_buffer, _IOLBF, M_LOG_BUFFSIZE); // buf set _IONBF  _IOLBF  _IOFBF
+    // setvbuf (fp,  (char *)nullptr, _IOLBF, 0);
+    // fprintf(stderr, "now all the running-information are going to the file %s\n", filelocation);
     setLastlogday(vtm.tm_mday);
     return true;
 }
@@ -124,13 +124,16 @@ int LogWriter::premakestr(char* buffer, XGAMELogLevel l)
 
     return snprintf(buffer, M_LOG_BUFFSIZE, "[%d-%02d-%02d %02d:%02d:%02d.%06lu] %s ",
         1900 + vtm.tm_year, vtm.tm_mon + 1, vtm.tm_mday, vtm.tm_hour, vtm.tm_min, vtm.tm_sec,
-        tv.tv_nsec/1000, logLevelToString(l));
+        tv.tv_nsec / 1000, logLevelToString(l));
 }
 
 bool LogWriter::Log(XGAMELogLevel l, const char* logformat, ...)
 {
     if (!checklevel(l))
         return false;
+
+    if (!m_buffer)
+        m_buffer = (char*)malloc(M_LOG_BUFFSIZE);
 
     char* start = m_buffer;
     int size = premakestr(start, l);
@@ -147,7 +150,7 @@ bool LogWriter::Log(XGAMELogLevel l, const char* logformat, ...)
         time_t now = time(&now);
         struct tm vtm;
         localtime_r(&now, &vtm);
-        //rotation by log file size or day time
+        // rotation by log file size or day time
         if (m_isolate && ((ftell(fp) >= MAX_LOG_SIZE) /* || (vtm.tm_mday != m_lastlogday)*/)) {
             LogInit(l, m_dirpath, m_modulename, m_verbose, m_isolate, m_isappend, m_issync);
         }
@@ -161,6 +164,8 @@ bool LogWriter::BigLog(XGAMELogLevel l, const std::string_view data, const char*
     if (!checklevel(l))
         return false;
 
+    if (!m_buffer)
+        m_buffer = (char*)malloc(M_LOG_BUFFSIZE);
     char* start = m_buffer;
     int size = premakestr(start, l);
 
@@ -181,7 +186,7 @@ bool LogWriter::BigLog(XGAMELogLevel l, const std::string_view data, const char*
         time_t now = time(&now);
         struct tm vtm;
         localtime_r(&now, &vtm);
-        //rotation by log file size or day time
+        // rotation by log file size or day time
         if (m_isolate && ((ftell(fp) >= MAX_LOG_SIZE) /* || (vtm.tm_mday != m_lastlogday)*/)) {
             LogInit(l, m_dirpath, m_modulename, m_verbose, m_isolate, m_isappend, m_issync);
         }

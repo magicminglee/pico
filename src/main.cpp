@@ -8,6 +8,7 @@
 #include "framework/fixed_thread_pool.hpp"
 #include "framework/global.hpp"
 #include "framework/http.hpp"
+#include "framework/httpserver.hpp"
 #include "framework/msgparser.hpp"
 #include "framework/protocol.hpp"
 #include "framework/random.hpp"
@@ -33,41 +34,9 @@ USE_NAMESPACE_FRAMEWORK
 using namespace gamelibs::redis;
 using namespace gamelibs::httpcli;
 using namespace gamelibs::mongo;
-
-class ExternalTCPConnectionMgr : public CConnectionMgr,
-                                 public CTLSingleton<ExternalTCPConnectionMgr> {
-};
-
-class InternalTCPConnectionMgr : public CConnectionMgr,
-                                 public CTLSingleton<InternalTCPConnectionMgr> {
-};
-
-class SubscribeTCPConnectionMgr : public CConnectionMgr,
-                                  public CTLSingleton<SubscribeTCPConnectionMgr> {
-};
-
-class ExternalMsgParser : public CMsgParser,
-                          public CTLSingleton<ExternalMsgParser> {
-public:
-    virtual bool Init() final
-    {
-        CheckCondition(!GetSize(), true);
-        return true;
-    }
-};
-
-class InternalMsgParser : public CMsgParser,
-                          public CTLSingleton<InternalMsgParser> {
-public:
-    virtual bool Init() final
-    {
-        CheckCondition(!GetSize(), true);
-
-        return true;
-    }
-};
-
 class TXWorker final : public CWorker {
+    std::vector<std::shared_ptr<CHTTPServer>> m_http_server;
+
 public:
     virtual bool Init() final
     {
@@ -81,8 +50,6 @@ public:
             MYARGS.LogDir.value().c_str());
 
         CheckCondition(CMongo::Instance().GetOne(), false);
-        CheckCondition(ExternalMsgParser::Instance().Init(), false);
-        CheckCondition(InternalMsgParser::Instance().Init(), false);
         CheckCondition(CRedisMgr::Instance().Init(), false);
         CheckCondition(CHttpContex::Instance().Init(), false);
         if (MYARGS.CertificateFile && MYARGS.PrivateKeyFile)
@@ -105,6 +72,24 @@ public:
             },
             nullptr);
 
+        // External Connection
+        for (auto& v : MYARGS.Workers[Id()].Host) {
+            auto [schema, hostname, port] = CConnection::SplitUri(v);
+            schema = CConnection::GetRealSchema(schema);
+            if (schema == "http" || schema == "https") {
+                m_http_server.push_back(std::make_shared<CHTTPServer>());
+                auto ref = m_http_server.back();
+                if (auto ret = ref->Init(
+                        v,
+                        [schema](CConnection* c) {
+                            CINFO("CTX:%s new %s conection connected", MYARGS.CTXID.c_str(), schema.c_str());
+                        });
+                    !ret) {
+                    CERROR("CTX:%s init worker init host %s", MYARGS.CTXID.c_str(), v.c_str());
+                    continue;
+                }
+            }
+        }
         auto v = (*MongoCtx)->list_database_names();
         for (auto& vv : v) {
             CINFO("DB:%s", vv.c_str());
