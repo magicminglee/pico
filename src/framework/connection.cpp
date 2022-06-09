@@ -1,7 +1,7 @@
 #include "connection.hpp"
 #include "connhandler.hpp"
 #include "encoder.hpp"
-#include "http.hpp"
+#include "ssl.hpp"
 #include "utils.hpp"
 #include "xlog.hpp"
 
@@ -131,9 +131,6 @@ bool CConnection::SendCmd(const void* data, const uint32_t dlen, std::optional<u
                 return sendcmd(v.data(), v.size());
             }
         }
-    } else if (IsStreamType(StreamType::StreamType_HTTP) || IsStreamType(StreamType::StreamType_HTTPS)) {
-        auto fr = CHttp::Frame(data, dlen);
-        return sendcmd(fr.data(), fr.size());
     }
     return sendcmd(data, dlen);
 }

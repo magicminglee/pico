@@ -27,7 +27,11 @@ main:
   interval: 5
   #veverdat apikey
   apikey: "tXv8@kk!-INDIBET-PROD"
-  mongourl: "mongodb://GAME:game12345@poker.demo.mongodb:5100,poker.demo.mongodb:5101,poker.demo.mongodb:5102/?authSource=admin&replicaSet=poker_demo"
+  mongourl:
+    "mongodb://GAME:game12345@poker.demo.mongodb:5100,poker.demo.mongodb:5101,poker.demo.mongodb:5102/?authSource=admin&replicaSet=poker_demo"
+    #Redis connect url
+  redisurl:
+    ["tcp://Ch1904@127.0.0.1:6379/0"]
   dbconf:
     [
       {

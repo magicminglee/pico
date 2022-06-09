@@ -1,7 +1,7 @@
 #include "httpcli.hpp"
 
 #include "framework/xlog.hpp"
-#include "framework/http.hpp"
+#include "framework/ssl.hpp"
 #include "framework/worker.hpp"
 
 #include "openssl/md5.h"
@@ -11,12 +11,12 @@ namespace httpcli {
 
     CHttpCli::CHttpCli()
     {
-        CHttpContex::Instance().IncsQueueCnt();
+        CSSLContex::Instance().IncsQueueCnt();
     }
 
     CHttpCli::~CHttpCli()
     {
-        CHttpContex::Instance().DescQueueCnt();
+        CSSLContex::Instance().DescQueueCnt();
     }
 
     bool CHttpCli::Emit(std::string_view url,
@@ -96,7 +96,7 @@ namespace httpcli {
         struct evhttp_request* req = nullptr;
         struct bufferevent* bev = nullptr;
 
-        if (CHttpContex::Instance().IsQueueOver()) {
+        if (CSSLContex::Instance().IsQueueOver()) {
             CDEBUG("It's over in http queue max size");
             goto error;
         }
@@ -139,7 +139,7 @@ namespace httpcli {
         if (strcasecmp(scheme, "http") == 0) {
             bev = CWorker::MAIN_CONTEX->Bvsocket(-1, nullptr, nullptr, nullptr, this, nullptr, false);
         } else if (strcasecmp(scheme, "https") == 0) {
-            ssl = CHttpContex::Instance().CreateOneSSL();
+            ssl = CSSLContex::Instance().CreateOneSSL();
             if (!ssl) {
                 CDEBUG("SSL_new fail");
                 goto error;

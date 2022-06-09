@@ -6,24 +6,31 @@
 
 NAMESPACE_FRAMEWORK_BEGIN
 
-class CConnection;
 class CHTTPServer : public CObject {
+    typedef std::string HttpCallbackType(evkeyvalq*, evkeyvalq*, std::string);
+    struct FilterData {
+        std::function<HttpCallbackType> data_cb;
+        evhttp_cmd_type filter;
+    };
+
 public:
     CHTTPServer() = default;
     CHTTPServer(CHTTPServer&&);
     ~CHTTPServer();
-    bool Init(std::string host, std::function<void(CConnection*)> cb);
-    bool Register(const std::string_view, std::function<void()> cb);
+    bool Init(std::string host);
+    bool JsonRegister(const std::string path, const uint32_t methods, std::function<HttpCallbackType> cb);
+    static std::optional<const char*> GetValueByKey(evkeyvalq* headers, const char* key);
 
 private:
-    static struct bufferevent* onConnected(struct event_base*, void*);
+    static bufferevent* onConnected(struct event_base*, void*);
     bool setOption(const int32_t fd);
     void destroy();
+    static void onJsonBindCallback(evhttp_request* req, void* arg);
 
 private:
     evhttp* m_http = nullptr;
-    std::function<void(CConnection*)> m_connected_callback = { nullptr };
     bool m_ishttps = false;
+    std::unordered_map<std::string, FilterData> m_callbacks;
     // DISABLE_CLASS_COPYABLE(CHTTPServer);
 };
 

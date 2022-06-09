@@ -3,11 +3,11 @@
 #include "connection.hpp"
 #include "decoder.hpp"
 #include "encoder.hpp"
-#include "http.hpp"
 #include "msgparser.hpp"
+#include "protocol.hpp"
+#include "ssl.hpp"
 #include "stringtool.hpp"
 #include "utils.hpp"
-#include "protocol.hpp"
 #include "xlog.hpp"
 
 #include "picohttpparser/picohttpparser.h"
@@ -51,7 +51,7 @@ bool CConnectionHandler::Connect(std::string host, std::optional<bool> ipv6)
     auto [schema, hostname, port] = CConnection::SplitUri(host);
     SSL* ssl = nullptr;
     if (schema == "https" || schema == "wss") {
-        ssl = CHttpContex::Instance().CreateOneSSL();
+        ssl = CSSLContex::Instance().CreateOneSSL();
         if (ssl)
             SSL_ctrl(ssl, SSL_CTRL_SET_TLSEXT_HOSTNAME, TLSEXT_NAMETYPE_host_name, (void*)host.data());
     }
@@ -219,27 +219,6 @@ void CConnectionHandler::OnRead(struct bufferevent* bev, void* arg)
                     if (auto res = self->m_read_callback(self->m_conn->Id(), self, std::string_view(self->m_conn->m_ws.Rcvbuf(), self->m_conn->m_ws.FrameLen())); !res)
                         CERROR("CTX:%s %ld command is not register cmdlen 0x%llx", MYARGS.CTXID.c_str(), self->Id(), self->m_conn->m_ws.FrameLen());
                 }
-            }
-            evbuffer_drain(input, ret);
-            len = evbuffer_get_length(input);
-            continue;
-        } else if (self->m_conn->IsStreamType(CConnection::StreamType::StreamType_HTTP) || self->m_conn->IsStreamType(CConnection::StreamType::StreamType_HTTPS)) {
-            uint32_t dlen = len > MAX_WATERMARK_SIZE ? MAX_WATERMARK_SIZE : len;
-            evbuffer_copyout(input, buffer, dlen);
-            CHttp http;
-            int32_t ret = http.Process(buffer, dlen);
-            if (ret > 0) {
-                int64_t api = CStringTool::ToInteger<int64_t>(http.Path() + 1);
-                if (auto res = self->m_read_callback(api, self, http.Data()); !res)
-                    CERROR("CTX:%s %ld http parse dlen 0x%x ret 0x%x", MYARGS.CTXID.c_str(), self->Id(), dlen, ret);
-            } else if (-2 == ret) {
-                break;
-            } else if (-1 == ret) {
-                std::string debugstr(buffer, dlen);
-                CERROR("CTX:%s http format %s parse failed!", MYARGS.CTXID.c_str(), debugstr.c_str());
-                if (self->m_close_callback)
-                    self->m_close_callback(self);
-                break;
             }
             evbuffer_drain(input, ret);
             len = evbuffer_get_length(input);

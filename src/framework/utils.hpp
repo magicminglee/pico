@@ -30,7 +30,7 @@ static const uint32_t MAX_HTTP_TIMEOUT = 10;
 static const uint32_t MAX_HTTP_REREYS = 3;
 static const uint32_t MAX_HTTP_BODY_SIZE = 1024 * 64;
 static const uint32_t MAX_HTTP_HEAD_SIZE = 1024 * 64;
-static const uint32_t MAX_WATERMARK_SIZE = 1024 * 1024 * 4;
+static uint32_t MAX_WATERMARK_SIZE = 1024 * 1024 * 4;
 
 class CUtils {
 public:

@@ -1,5 +1,6 @@
 #include "worker.hpp"
 #include "argument.hpp"
+#include "ssl.hpp"
 #include "stringtool.hpp"
 #include "xlog.hpp"
 
@@ -78,10 +79,36 @@ void CWorker::OnRightEvent(
 bool CWorker::Init()
 {
     CheckCondition(m_main_and_work_chan.CreateBvL(*MAIN_CONTEX, CWorker::readOnLeft, nullptr, nullptr, this), false);
-
     MYARGS.LogDir = MYARGS.LogDir.value() + "w" + Name();
     MYARGS.CTXID = Name();
     MYARGS.Tid = Id();
+
+    XLOG::LogInit(MYARGS.LogLevel, MYARGS.ModuleName, MYARGS.LogDir, MYARGS.IsVerbose, MYARGS.IsIsolate);
+    CheckCondition(CSSLContex::Instance().Init(), false);
+    if (MYARGS.CertificateFile && MYARGS.PrivateKeyFile)
+        CheckCondition(CSSLContex::Instance().LoadCertificateAndPrivateKey(MYARGS.CertificateFile.value(), MYARGS.PrivateKeyFile.value()), false);
+
+    OnLeftEvent(
+        [](std::string_view data) {
+            if (data == "stop") {
+                CWorker::MAIN_CONTEX->Exit(0);
+            }
+        },
+        [](std::string_view data) {
+            try {
+                auto j = nlohmann::json::parse(std::move(data));
+                if (j["cmd"].is_string() && j["cmd"].get_ref<const std::string&>() == "reload") {
+                }
+            } catch (const nlohmann::json::exception& e) {
+                CERROR("CTX:%s %s json exception %s", MYARGS.CTXID.c_str(), __FUNCTION__, e.what());
+            }
+        },
+        nullptr);
+
+    nlohmann::json j(MYARGS.Workers[Id()].Host);
+    CINFO("CTX:%s id %ld init worker listenning on hosts %s logdir %s",
+        MYARGS.CTXID.c_str(), Id(), j.dump().c_str(),
+        MYARGS.LogDir.value().c_str());
 
     return true;
 }
@@ -104,7 +131,7 @@ CWorker* CWorkerMgr::Create(const uint64_t total)
 {
     if (!m_create_func)
         return nullptr;
-    //overload
+    // overload
     if (m_mgr.size() >= total) {
         return nullptr;
     }
