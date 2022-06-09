@@ -2,11 +2,11 @@
 
 USE_NAMESPACE_FRAMEWORK
 
-void CApp::Register(std::shared_ptr<CHTTPServer> ref)
+void CApp::Register(std::shared_ptr<CHTTPServer> hs)
 {
-    ref->JsonRegister("/game/v1/example", EVHTTP_REQ_GET | EVHTTP_REQ_POST, [](evkeyvalq* qheaders, evkeyvalq* headers, std::string idata) -> std::string {
+    hs->JsonRegister("/game/v1/example", EVHTTP_REQ_GET | EVHTTP_REQ_POST, [](evkeyvalq* qheaders, evkeyvalq* headers, std::string idata) -> std::string {
         if (auto v = CHTTPServer::GetValueByKey(qheaders, "userid"); v) {
-            CINFO("userid:%s", v.value());
+            CINFO("CTX:%s userid:%s", MYARGS.CTXID.c_str(), v.value());
         }
         if (auto v = CHTTPServer::GetValueByKey(headers, "ACCEPT-ENCODING"); v) {
             CINFO("accept-encoding:%s", v.value());

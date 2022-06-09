@@ -30,8 +30,7 @@ main:
   mongourl:
     "mongodb://GAME:game12345@poker.demo.mongodb:5100,poker.demo.mongodb:5101,poker.demo.mongodb:5102/?authSource=admin&replicaSet=poker_demo"
     #Redis connect url
-  redisurl:
-    ["tcp://Ch1904@127.0.0.1:6379/0"]
+  redisurl: ["tcp://Ch1904@poker.demo.mongodb:5002/4"]
   dbconf:
     [
       {
@@ -49,30 +48,10 @@ workers: [
       inhosts: "ws://*:9723",
       subhosts: ["ws://feed.decimalcricket.com/api/match/feed"],
     },
+    {
+      #hosts: ["ws://*:9015", "udp://zzjs888.com:13000"],
+      hosts: ["http://*:8080", "https://*:8443"],
+      inhosts: "ws://*:9723",
+      subhosts: ["ws://feed.decimalcricket.com/api/match/feed"],
+    },
   ]
-# workers: [
-#     {
-#       #hosts: ["ws://*:9015", "udp://zzjs888.com:13000"],
-#       hosts: [],
-#       inhosts: "ws://*:9810",
-#       subhosts: ["ws://feed.decimalcricket.com/api/match/feed"],
-#     },
-#     {
-#       #hosts: ["ws://*:9015", "udp://zzjs888.com:13000"],
-#       hosts: [],
-#       inhosts: "ws://*:9811",
-#       subhosts: ["ws://feed.decimalcricket.com/api/match/feed"],
-#     },
-#     {
-#       #hosts: ["ws://*:9015", "udp://zzjs888.com:13000"],
-#       hosts: [],
-#       inhosts: "ws://*:9812",
-#       subhosts: ["ws://feed.decimalcricket.com/api/match/feed"],
-#     },
-#     {
-#       #hosts: ["ws://*:9015", "udp://zzjs888.com:13000"],
-#       hosts: [],
-#       inhosts: "ws://*:9813",
-#       subhosts: ["ws://feed.decimalcricket.com/api/match/feed"],
-#     },
-#   ]

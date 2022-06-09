@@ -112,7 +112,7 @@ bool CUDPServer::setOption()
     struct linger ling = { 0, 0 };
     error = ::setsockopt(m_listenfd, SOL_SOCKET, SO_LINGER, (void*)&ling, sizeof(ling));
     CheckCondition(0 == error, false);
-#ifdef LINUX_PLATFORMOS
+#if defined(LINUX_PLATFORMOS) || defined(DARWIN_PLATFORMOS)
     error = ::setsockopt(m_listenfd, IPPROTO_UDP, TCP_NODELAY, (void*)&flags, sizeof(flags));
     CheckCondition(0 == error, false);
 #endif

@@ -40,7 +40,6 @@
             __FILE__, __LINE__, ##__VA_ARGS__);                                             \
     } while (0)
 
-
 namespace XLOG {
 enum class XGAMELogLevel {
     XGAMELL_TRACE = 1,
@@ -54,7 +53,7 @@ class LogWriter {
 public:
     LogWriter() = default;
     ~LogWriter();
-    //loginit
+    // loginit
     //@param l: log level
     //@param dirname: the directory of log
     //@param modulename: log module name
@@ -63,9 +62,17 @@ public:
     //@param append: is to append mode to write logs to file
     //@param issync: is to flush to disk per write system call
     bool LogInit(XGAMELogLevel l, const char* dirname, const char* modulename, bool verbose, bool isolate, bool append, bool issync);
+#ifdef LINUX_PLATFORMOS
     bool Log(XGAMELogLevel l, const char* logformat, ...) __attribute__((format(printf, 3, 4)));
     bool BigLog(XGAMELogLevel l, const std::string_view data, const char* logformat, ...) __attribute__((format(printf, 4, 5)));
-    constexpr bool HasInit() { return fp != nullptr; }
+#else
+    bool Log(XGAMELogLevel l, const char* logformat, ...);
+    bool BigLog(XGAMELogLevel l, const std::string_view data, const char* logformat, ...);
+#endif
+    constexpr bool HasInit()
+    {
+        return fp != nullptr;
+    }
     constexpr void RemoveConsole() { m_verbose = false; }
 
 public:

@@ -100,7 +100,7 @@ void CHTTPServer::onJsonBindCallback(evhttp_request* req, void* arg)
 
 bool CHTTPServer::JsonRegister(const std::string path, const uint32_t methods, std::function<HttpCallbackType> cb)
 {
-    m_callbacks[path] = FilterData { data_cb : cb, filter : (evhttp_cmd_type)methods };
+    m_callbacks[path] = FilterData { .data_cb = cb, .filter = (evhttp_cmd_type)methods };
     evhttp_set_cb(m_http, path.c_str(), onJsonBindCallback, &m_callbacks[path]);
     return true;
 }
@@ -136,7 +136,7 @@ bool CHTTPServer::setOption(const int32_t fd)
         return false;
     if (evutil_make_socket_nonblocking(fd) < 0)
         return false;
-#ifdef LINUX_PLATFORMOS
+#if defined(LINUX_PLATFORMOS) || defined(DARWIN_PLATFORMOS)
     int32_t flags = 1;
     int32_t error = ::setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, (const char*)&flags, sizeof(flags));
     if (0 != error)

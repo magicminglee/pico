@@ -51,7 +51,7 @@ namespace redis {
         va_list ap;
         va_start(ap, format);
         if (callback) {
-            RedisPrivateData* rpd = CNEW RedisPrivateData { callback : std::move(callback) };
+            RedisPrivateData* rpd = CNEW RedisPrivateData { .callback = std::move(callback) };
             status = redisvAsyncCommand(AsynHandle(id), replyCallback, rpd, format, ap);
             if (status != REDIS_OK && rpd) {
                 CERROR("%s: %d", __FUNCTION__, status);

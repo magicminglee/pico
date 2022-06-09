@@ -419,7 +419,7 @@ std::optional<std::string> CWebSocket::OpenHandFrame(const std::string& uri, con
     size_t bufflen = 0;
     std::string result = "GET %s HTTP/1.1\r\nConnection: Upgrade\r\nHost: %s:%s\r\nSec-WebSocket-Key: %s\r\nSec-WebSocket-Version: 13\r\n%sUpgrade: websocket\r\n\r\n";
     bufflen += snprintf(buffer, sizeof(buffer) - bufflen, result.c_str(), path.c_str(), hostname.c_str(), port.c_str(), m_swsk.c_str(), headerstr.data());
-    return std::move(std::string(buffer, bufflen));
+    return std::string(buffer, bufflen);
 }
 
 std::optional<std::vector<std::string_view>> CWebSocket::Frame(const char* data, const unsigned long long dlen, const unsigned char opcode, const unsigned int mask_key)

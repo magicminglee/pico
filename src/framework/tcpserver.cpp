@@ -121,7 +121,7 @@ bool CTCPServer::setOption()
         return false;
     if (evutil_make_socket_nonblocking(m_listenfd) < 0)
         return false;
-#ifdef LINUX_PLATFORMOS
+#if defined(LINUX_PLATFORMOS) || defined(DARWIN_PLATFORMOS)
     int32_t flags = 1;
     int32_t error = ::setsockopt(m_listenfd, IPPROTO_TCP, TCP_NODELAY, (const char*)&flags, sizeof(flags));
     if (0 != error)

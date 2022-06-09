@@ -17,7 +17,7 @@
 #include <thread>
 #include <unordered_map>
 
-#ifdef LINUX_PLATFORMOS
+#if defined(LINUX_PLATFORMOS) || defined(DARWIN_PLATFORMOS)
 #include <arpa/inet.h>
 #include <netinet/tcp.h>
 #include <strings.h>
@@ -40,18 +40,6 @@
 #define USE_NAMESPACE_FRAMEWORK using namespace FRAMEWORK;
 #endif
 
-#ifndef NAMESPACE_EXTERNAL_BEGIN
-#define NAMESPACE_EXTERNAL_BEGIN namespace EXTERNAL {
-#endif
-
-#ifndef NAMESPACE_EXTERNAL_END
-#define NAMESPACE_EXTERNAL_END }
-#endif
-
-#ifndef USE_NAMESPACE_EXTERNAL
-#define USE_NAMESPACE_EXTERNAL using namespace EXTERNAL;
-#endif
-
 #ifndef CNEW
 #define CNEW new
 #endif
@@ -68,7 +56,7 @@
 
 #ifndef CDELARR
 #define CDELARR(x) \
-    delete [] x; \
+    delete[] x;    \
     x = nullptr;
 #endif
 
@@ -78,6 +66,5 @@ private:                             \
     x(const x&) = delete;            \
     x& operator=(const x&) = delete; \
     x(const x&&) = delete;
-
 
 #endif
