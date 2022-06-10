@@ -32,8 +32,10 @@ bool CArgument::ParseArg(int argc, char** argv, const std::string pgname, const 
 bool CArgument::ParseYaml()
 {
     YAML::Node config = YAML::LoadFile(m_conf.value());
-    if (!config)
+    if (!config) {
+        std::cout << "load config file failed:" << m_conf.value() << std::endl;
         return false;
+    }
 
     if (config["main"] && config["main"].IsMap() && config["main"]["type"] && config["main"]["id"]) {
         Sid = CUtils::HashServerId(config["main"]["type"].as<std::uint16_t>(), config["main"]["id"].as<std::uint16_t>());

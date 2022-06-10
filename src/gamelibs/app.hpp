@@ -87,8 +87,9 @@ class CApp {
     };
 
 public:
-    static void Start()
+    static bool Start(int argc, char** argv)
     {
+        CheckCondition(MYARGS.ParseArg(argc, argv, "Pico", "Pico Program"), false);
         CGlobal::InitGlobal();
 
         XLOG::LogInit(MYARGS.LogLevel, MYARGS.ModuleName, MYARGS.LogDir,
@@ -96,6 +97,7 @@ public:
 
         AppService s;
         s.Loop();
+        return true;
     }
 
     // static bool Init();

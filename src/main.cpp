@@ -33,7 +33,6 @@ void CApp::Register(std::shared_ptr<CHTTPServer> hs)
 
 int main(int argc, char** argv)
 {
-    CheckCondition(MYARGS.ParseArg(argc, argv, "Pico", "Pico Program"), EXIT_FAILURE);
-    CApp::Start();
+    CheckCondition(CApp::Start(argc, argv), EXIT_FAILURE);
     return EXIT_SUCCESS;
 }
