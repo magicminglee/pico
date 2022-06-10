@@ -71,7 +71,7 @@ void CHTTPServer::onJsonBindCallback(evhttp_request* req, void* arg)
             return;
         }
         // decode query string to headers
-        evkeyvalq qheaders;
+        evkeyvalq qheaders = {0};
         if (auto qstr = evhttp_uri_get_query(deuri); qstr) {
             if (evhttp_parse_query_str(qstr, &qheaders) < 0) {
                 evhttp_send_error(req, HTTP_BADREQUEST, 0);
@@ -93,7 +93,8 @@ void CHTTPServer::onJsonBindCallback(evhttp_request* req, void* arg)
         evhttp_send_reply(req, HTTP_OK, "OK", evb);
         if (evb)
             evbuffer_free(evb);
-        evhttp_uri_free(deuri);
+        if (deuri)
+            evhttp_uri_free(deuri);
         return;
     }
     evhttp_send_error(req, HTTP_INTERNAL, 0);
