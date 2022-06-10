@@ -55,6 +55,7 @@ void CHTTPServer::onJsonBindCallback(evhttp_request* req, void* arg)
     auto filters = (FilterData*)arg;
     if (req && filters && filters->data_cb) {
         auto cmd = evhttp_request_get_command(req);
+        // filter
         if (0 == (filters->filter & cmd)) {
             evhttp_send_error(req, HTTP_BADMETHOD, 0);
             return;
@@ -116,12 +117,55 @@ bool CHTTPServer::Init(std::string host)
     if (type == "https")
         m_ishttps = true;
 
-    auto handle = evhttp_bind_socket_with_handle(m_http, "0.0.0.0", CStringTool::ToInteger<uint16_t>(port));
+    struct addrinfo hints;
+    struct addrinfo *result = nullptr, *rp = nullptr;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_flags = AI_PASSIVE;
+    int32_t ret = -1;
+    if (hostname == "*") {
+        ret = evutil_getaddrinfo(nullptr, port.c_str(), &hints, &result);
+    } else {
+        ret = evutil_getaddrinfo(hostname.c_str(), port.c_str(), &hints, &result);
+    }
+    if (ret != 0) {
+        return false;
+    }
+    int32_t listenfd = -1;
+    for (rp = result; rp != nullptr; rp = rp->ai_next) {
+        listenfd = ::socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+        if (listenfd == -1)
+            continue;
+
+        if (!setOption(listenfd)) {
+            destroy();
+            continue;
+        }
+        break;
+    }
+    if (nullptr == rp) {
+        freeaddrinfo(result);
+        return false;
+    }
+
+    freeaddrinfo(result);
+
+    if (::bind(listenfd, rp->ai_addr, rp->ai_addrlen) < 0) {
+        destroy();
+        return false;
+    }
+
+    if (::listen(listenfd, 512) < 0) {
+        destroy();
+        return false;
+    }
+
+    auto handle = evhttp_accept_socket_with_handle(m_http, listenfd);
     if (!handle) {
         destroy();
         return false;
     }
-    setOption(evhttp_bound_socket_get_fd(handle));
     evhttp_set_bevcb(m_http, onConnected, this);
     evhttp_set_gencb(m_http, onDefault, this);
 
