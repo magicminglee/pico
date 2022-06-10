@@ -35,6 +35,7 @@ public:
     std::vector<std::string> DbName;
     std::vector<std::vector<std::string>> DbColl;
     std::optional<std::string> ApiKey;
+    std::optional<uint32_t> MaxFrameSize;
 
     std::string CTXID;
     uint32_t InitInternConnId = { 0 };

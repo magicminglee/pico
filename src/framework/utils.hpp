@@ -30,7 +30,7 @@ static const uint32_t MAX_HTTP_TIMEOUT = 10;
 static const uint32_t MAX_HTTP_REREYS = 3;
 static const uint32_t MAX_HTTP_BODY_SIZE = 1024 * 64;
 static const uint32_t MAX_HTTP_HEAD_SIZE = 1024 * 64;
-static uint32_t MAX_WATERMARK_SIZE = 1024 * 1024 * 4;
+static uint32_t MAX_WATERMARK_SIZE = 1024 * 64;
 
 class CUtils {
 public:
@@ -80,7 +80,7 @@ public:
 
     static constexpr uint32_t HashWorkerId(const uint32_t sid, const uint16_t tid)
     {
-        //stype(16) | sid(8) | tid(8)
+        // stype(16) | sid(8) | tid(8)
         return (sid & 0xFFFF0000) | ((sid & 0xFFFF) << 8) | tid;
     }
     static constexpr uint32_t WorkerSrvId(const uint32_t hashworkerid)

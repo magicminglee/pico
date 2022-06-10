@@ -78,6 +78,9 @@ bool CArgument::ParseYaml()
     if (config["main"] && config["main"].IsMap() && config["main"]["interval"]) {
         Interval = config["main"]["interval"].as<std::uint32_t>() * 1000;
     }
+    if (config["main"] && config["main"].IsMap() && config["main"]["maxframesize"]) {
+        MaxFrameSize = config["main"]["maxframesize"].as<std::uint32_t>();
+    }
     if (config["main"] && config["main"].IsMap() && config["main"]["redisurl"] && config["main"]["redisurl"].IsSequence()) {
         RedisUrl.clear();
         for (auto&& v : config["main"]["redisurl"]) {
