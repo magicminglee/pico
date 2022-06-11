@@ -2,6 +2,11 @@
 
 USE_NAMESPACE_FRAMEWORK
 
+bool CApp::Init()
+{
+    return true;
+}
+
 void CApp::Register(std::shared_ptr<CHTTPServer> hs)
 {
     hs->JsonRegister("/game/v1/example", EVHTTP_REQ_GET | EVHTTP_REQ_POST, [](evkeyvalq* qheaders, evkeyvalq* headers, std::string idata) -> std::string {

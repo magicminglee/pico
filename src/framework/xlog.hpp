@@ -6,8 +6,6 @@
     do {                                                                                 \
         XLOG::WARN_W.Log(XLOG::XGAMELogLevel::XGAMELL_ERROR, "[%s:%d] => " log_fmt "\n", \
             __FILE__, __LINE__, ##__VA_ARGS__);                                          \
-        XLOG::INFO_W.Log(XLOG::XGAMELogLevel::XGAMELL_INFO, "[%s:%d] => " log_fmt "\n",  \
-            __FILE__, __LINE__, ##__VA_ARGS__);                                          \
     } while (0)
 
 #define CWARN(log_fmt, ...)                                                                \

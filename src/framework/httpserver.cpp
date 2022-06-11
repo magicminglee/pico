@@ -4,6 +4,7 @@
 #include "stringtool.hpp"
 #include "worker.hpp"
 #include "xlog.hpp"
+#include "argument.hpp"
 
 NAMESPACE_FRAMEWORK_BEGIN
 
@@ -351,10 +352,9 @@ bool CHTTPServer::Init(std::string host)
         return false;
     }
 
-    freeaddrinfo(result);
-
     if (::bind(listenfd, rp->ai_addr, rp->ai_addrlen) < 0) {
         destroy();
+        CERROR("CTX:%s bind:%s", MYARGS.CTXID.c_str(), strerror(errno));
         return false;
     }
 
@@ -370,6 +370,7 @@ bool CHTTPServer::Init(std::string host)
     }
     evhttp_set_bevcb(m_http, onConnected, this);
     evhttp_set_gencb(m_http, onDefault, this);
+    freeaddrinfo(result);
 
     return true;
 }

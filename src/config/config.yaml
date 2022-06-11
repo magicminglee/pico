@@ -48,7 +48,6 @@ workers: [
       subhosts: ["ws://feed.decimalcricket.com/api/match/feed"],
     },
     {
-      #hosts: ["ws://*:9015", "udp://zzjs888.com:13000"],
       hosts: ["http://*:8080", "https://*:8443"],
       inhosts: "ws://*:9723",
       subhosts: ["ws://feed.decimalcricket.com/api/match/feed"],

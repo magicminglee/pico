@@ -18,8 +18,10 @@ bool CWorker::Loop()
     MAIN_CONTEX.reset(CNEW CContex());
     assert(nullptr != MAIN_CONTEX);
 
-    if (!Init())
+    if (!Init()) {
+        initOk();
         return false;
+    }
 
     initOk();
 
@@ -84,9 +86,16 @@ bool CWorker::Init()
     MYARGS.Tid = Id();
 
     XLOG::LogInit(MYARGS.LogLevel, MYARGS.ModuleName, MYARGS.LogDir, MYARGS.IsVerbose, MYARGS.IsIsolate);
-    CheckCondition(CSSLContex::Instance().Init(), false);
-    if (MYARGS.CertificateFile && MYARGS.PrivateKeyFile)
-        CheckCondition(CSSLContex::Instance().LoadCertificateAndPrivateKey(MYARGS.CertificateFile.value(), MYARGS.PrivateKeyFile.value()), false);
+    if (!CSSLContex::Instance().Init()) {
+        CERROR("CTX:%s init ssl contex fail", MYARGS.CTXID.c_str());
+        return false;
+    }
+    if (MYARGS.CertificateFile && MYARGS.PrivateKeyFile) {
+        if (!CSSLContex::Instance().LoadCertificateAndPrivateKey(MYARGS.CertificateFile.value(), MYARGS.PrivateKeyFile.value())) {
+            CERROR("CTX:%s load ssl certificate and private key fail", MYARGS.CTXID.c_str());
+            return false;
+        }
+    }
 
     OnLeftEvent(
         [](std::string_view data) {

@@ -39,9 +39,18 @@ class CApp {
         {
             CheckCondition(CWorker::Init(), false);
 
-            // CheckCondition(CApp::Init(), false);
-            CheckCondition(CMongo::Instance().GetOne(), false);
-            CheckCondition(CRedisMgr::Instance().Init(), false);
+            if (!CApp::Init()) {
+                CERROR("CTX:%s CApp::Init fail", MYARGS.CTXID.c_str());
+                return false;
+            }
+            if (!CMongo::Instance().GetOne()) {
+                CERROR("CTX:%s CMongo::GetOne fail", MYARGS.CTXID.c_str());
+                return false;
+            }
+            if(!CRedisMgr::Instance().Init()){
+                CERROR("CTX:%s CRedisMgr::Init fail", MYARGS.CTXID.c_str());
+                return false;
+            }
 
             for (auto& v : MYARGS.Workers[Id()].Host) {
                 auto [schema, hostname, port] = CConnection::SplitUri(v);
@@ -50,7 +59,7 @@ class CApp {
                     m_http_server.push_back(std::make_shared<CHTTPServer>());
                     auto ref = m_http_server.back();
                     if (!ref->Init(v)) {
-                        CERROR("CTX:%s init worker init host %s", MYARGS.CTXID.c_str(), v.c_str());
+                        CERROR("CTX:%s HttpServer::Init %s fail", MYARGS.CTXID.c_str(), v.c_str());
                         continue;
                     }
                     CApp::Register(ref);
@@ -100,8 +109,8 @@ public:
         return true;
     }
 
-    // static bool Init();
-    static void Register(std::shared_ptr<CHTTPServer> ref);
+    static bool Init();
+    static void Register(std::shared_ptr<CHTTPServer> hs);
 };
 
 NAMESPACE_FRAMEWORK_END
