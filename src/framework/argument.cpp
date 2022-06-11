@@ -136,7 +136,10 @@ bool CArgument::ParseYaml()
 
     nlohmann::json j;
     j["cmd"] = "reload";
-    j["logdir"] = LogDir.value();
+    j["loglevel"] = LogLevel.value();
+    j["certificatefile"] = CertificateFile.value();
+    j["privatekeyfile"] = PrivateKeyFile.value();
+    j["alloworigin"] = IsAllowOrigin.value();
     auto a = nlohmann::json::array();
     for (auto&& v : Workers) {
         std::vector<std::string> hosts;

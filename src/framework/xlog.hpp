@@ -72,6 +72,8 @@ public:
         return fp != nullptr;
     }
     constexpr void RemoveConsole() { m_verbose = false; }
+    constexpr void UpdateLogLevel(const XGAMELogLevel lv) { m_system_level = lv; }
+    static XGAMELogLevel LogStrToLogLevel(std::string_view lvstr);
 
 public:
     const static unsigned int M_LOG_PATH_LEN = 250;

@@ -282,7 +282,7 @@ static void onDefault(struct evhttp_request* req, void* arg)
     if (fd > 0) {
         auto& contentype = it->second;
         evhttp_add_header(evhttp_request_get_output_headers(req), "content-type", contentype.c_str());
-        if (MYARGS.IsAllowOrigin)
+        if (MYARGS.IsAllowOrigin && MYARGS.IsAllowOrigin.value())
             evhttp_add_header(evhttp_request_get_output_headers(req), "access-control-allow-origin", "*");
         auto evb = evhttp_request_get_output_buffer(req);
         evbuffer_add_file(evb, fd, 0, fs::file_size(f));
@@ -338,7 +338,7 @@ void CHTTPServer::onJsonBindCallback(evhttp_request* req, void* arg)
         auto evb = evbuffer_new();
         evbuffer_add_printf(evb, "%s", r.data());
         evhttp_add_header(evhttp_request_get_output_headers(req), "content-type", "application/json; charset=utf-8");
-        if (MYARGS.IsAllowOrigin)
+        if (MYARGS.IsAllowOrigin && MYARGS.IsAllowOrigin.value())
             evhttp_add_header(evhttp_request_get_output_headers(req), "access-control-allow-origin", "*");
         evhttp_send_reply(req, HTTP_OK, "OK", evb);
         if (evb)

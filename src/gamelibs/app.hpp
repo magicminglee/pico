@@ -39,6 +39,34 @@ class CApp {
         {
             CheckCondition(CWorker::Init(), false);
 
+            OnLeftEvent(
+                [](std::string_view data) {
+                    if (data == "stop") {
+                        CWorker::MAIN_CONTEX->Exit(0);
+                    }
+                },
+                [](std::string_view data) {
+                    try {
+                        auto j = nlohmann::json::parse(std::move(data));
+                        if (j["cmd"].is_string() && j["cmd"].get_ref<const std::string&>() == "reload") {
+                            MYARGS.LogLevel = j["loglevel"].get<std::string>();
+                            XLOG::WARN_W.UpdateLogLevel(XLOG::LogWriter::LogStrToLogLevel(MYARGS.LogLevel.value()));
+                            XLOG::INFO_W.UpdateLogLevel(XLOG::LogWriter::LogStrToLogLevel(MYARGS.LogLevel.value()));
+                            XLOG::DBLOG_W.UpdateLogLevel(XLOG::LogWriter::LogStrToLogLevel(MYARGS.LogLevel.value()));
+                            MYARGS.CertificateFile = j["certificatefile"].get<std::string>();
+                            MYARGS.PrivateKeyFile = j["privatekeyfile"].get<std::string>();
+                            if (!CSSLContex::Instance().LoadCertificateAndPrivateKey(MYARGS.CertificateFile.value(), MYARGS.PrivateKeyFile.value())) {
+                                CERROR("CTX:%s load ssl certificate and private key fail", MYARGS.CTXID.c_str());
+                            }
+                            MYARGS.IsAllowOrigin = j["alloworigin"].get<bool>();
+                        }
+                        CINFO("CTX:%s external cmd %s", MYARGS.CTXID.c_str(), j.dump().c_str());
+                    } catch (const nlohmann::json::exception& e) {
+                        CERROR("CTX:%s %s json exception %s", MYARGS.CTXID.c_str(), __FUNCTION__, e.what());
+                    }
+                },
+                nullptr);
+
             if (!CApp::Init()) {
                 CERROR("CTX:%s CApp::Init fail", MYARGS.CTXID.c_str());
                 return false;

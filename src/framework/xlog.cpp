@@ -36,7 +36,7 @@ static const char* logLevelToString(XGAMELogLevel l)
     }
 }
 
-static XGAMELogLevel logStrToLogLevel(std::string_view lvstr)
+XGAMELogLevel LogWriter::LogStrToLogLevel(std::string_view lvstr)
 {
     if (lvstr == "DEBUG")
         return XGAMELogLevel::XGAMELL_DEBUG;
@@ -58,8 +58,8 @@ bool LogInit(std::optional<std::string_view> l,
     std::optional<bool> verbose,
     std::optional<bool> isolate)
 {
-    INFO_W.LogInit(logStrToLogLevel(l.value_or("INFO")), (std::string(logdir.value_or("./mylog")) + "/info/").c_str(), modulename.value().data(), verbose.value_or(false), isolate.value_or(true), true, false);
-    WARN_W.LogInit(logStrToLogLevel(l.value_or("WARN")), (std::string(logdir.value_or("./mylog")) + "/error/").c_str(), modulename.value().data(), verbose.value_or(false), isolate.value_or(true), true, false);
+    INFO_W.LogInit(LogWriter::LogStrToLogLevel(l.value_or("INFO")), (std::string(logdir.value_or("./mylog")) + "/info/").c_str(), modulename.value().data(), verbose.value_or(false), isolate.value_or(true), true, false);
+    WARN_W.LogInit(LogWriter::LogStrToLogLevel(l.value_or("WARN")), (std::string(logdir.value_or("./mylog")) + "/error/").c_str(), modulename.value().data(), verbose.value_or(false), isolate.value_or(true), true, false);
 
     return true;
 }

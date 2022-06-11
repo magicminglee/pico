@@ -7,7 +7,7 @@
 
 NAMESPACE_FRAMEWORK_BEGIN
 
-//Entrance On Worker Thread
+// Entrance On Worker Thread
 class CWorker : public CObject {
     std::map<CChannel::MsgType, std::function<void(std::string_view)>> m_left_callbacks;
     std::map<CChannel::MsgType, std::function<void(std::string_view)>> m_right_callbacks;
@@ -46,7 +46,7 @@ private:
     static std::condition_variable m_cond;
     static int32_t m_init_threads;
 
-    //L(Woker)<=========>R(Main)
+    // L(Woker)<=========>R(Main)
     CChannel m_main_and_work_chan;
 
     DISABLE_CLASS_COPYABLE(CWorker);
