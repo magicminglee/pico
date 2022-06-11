@@ -62,6 +62,9 @@ bool CArgument::ParseYaml()
     if (config["main"] && config["main"].IsMap() && config["main"]["isolate"]) {
         IsIsolate = config["main"]["isolate"].as<bool>();
     }
+    if (config["main"] && config["main"].IsMap() && config["main"]["webroot"]) {
+        WebRootDir = config["main"]["webroot"].as<std::string>();
+    }
     if (config["main"] && config["main"].IsMap() && config["main"]["certificatefile"]) {
         CertificateFile = config["main"]["certificatefile"].as<std::string>();
     }

@@ -47,7 +47,7 @@ class CApp {
                 CERROR("CTX:%s CMongo::GetOne fail", MYARGS.CTXID.c_str());
                 return false;
             }
-            if(!CRedisMgr::Instance().Init()){
+            if (!CRedisMgr::Instance().Init()) {
                 CERROR("CTX:%s CRedisMgr::Init fail", MYARGS.CTXID.c_str());
                 return false;
             }
@@ -109,7 +109,7 @@ public:
         return true;
     }
 
-    static bool Init();
+    static bool Init() { return true; }
     static void Register(std::shared_ptr<CHTTPServer> hs);
 };
 

@@ -31,6 +31,7 @@ static const uint32_t MAX_HTTP_REREYS = 3;
 static const uint32_t MAX_HTTP_BODY_SIZE = 1024 * 64;
 static const uint32_t MAX_HTTP_HEAD_SIZE = 1024 * 64;
 static uint32_t MAX_WATERMARK_SIZE = 1024 * 64;
+static const uint32_t BACKLOG_SIZE = 512;
 
 class CUtils {
 public:

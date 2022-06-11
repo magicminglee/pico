@@ -5,8 +5,6 @@ main:
   id: 1
   #Specify timezone(default CST)
   timezone: "/usr/share/zoneinfo/UTC"
-  #By default Service does not run as a daemon. Use true if you need it.
-  daemonize: false
   #Specify the log directory.
   logdir: "./mylog/"
   #Specify the server verbosity level(DEBUG INFO TRACE WARN ERROR)
@@ -15,16 +13,14 @@ main:
   verbose: true
   #Split log file when file is larger than 64MB
   isolate: true
+  #Specify the web root directory.
+  webroot: "."
   certificatefile: "../config/server.crt"
   privatekeyfile: "../config/server.key"
   #Setup allow origin
   alloworigin: true
   #Log module name
   modulename: "pico"
-  #Config host
-  confhost: "ws://*:9700"
-  #heartbeat interval(s)
-  interval: 5
   #maxframe size(bytes)
   maxframesize: 65536
   mongourl: "mongodb://GAME:game12345@poker.demo.mongodb:5100,poker.demo.mongodb:5101,poker.demo.mongodb:5102/?authSource=admin&replicaSet=poker_demo"

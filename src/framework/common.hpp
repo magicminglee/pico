@@ -18,10 +18,8 @@
 #include <unordered_map>
 
 #if defined(LINUX_PLATFORMOS) || defined(DARWIN_PLATFORMOS)
-#include <arpa/inet.h>
 #include <netinet/tcp.h>
-#include <strings.h>
-#include <unistd.h>
+#include <fcntl.h>
 #endif
 
 #ifndef PLATFORMOS

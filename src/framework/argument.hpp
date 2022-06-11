@@ -23,6 +23,7 @@ public:
     std::optional<std::string> ConfDir;
     std::optional<bool> IsVerbose;
     std::optional<bool> IsIsolate;
+    std::optional<std::string> WebRootDir;
     std::optional<std::string> CertificateFile;
     std::optional<std::string> PrivateKeyFile;
     std::optional<bool> IsAllowOrigin;

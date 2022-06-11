@@ -1,12 +1,9 @@
 #include "tcpserver.hpp"
 #include "connection.hpp"
 #include "stringtool.hpp"
-#include "worker.hpp"
 #include "xlog.hpp"
 
 NAMESPACE_FRAMEWORK_BEGIN
-
-static const int32_t BACKLOG_SIZE = 512;
 
 CTCPServer::~CTCPServer()
 {
