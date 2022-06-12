@@ -10,44 +10,6 @@
 NAMESPACE_FRAMEWORK_BEGIN
 namespace fs = std::filesystem;
 
-CHTTPServer::~CHTTPServer()
-{
-    destroy();
-}
-
-CHTTPServer::CHTTPServer(CHTTPServer&& rhs)
-{
-}
-
-void CHTTPServer::destroy()
-{
-    if (m_http) {
-        evhttp_free(m_http);
-        m_http = nullptr;
-    }
-}
-
-struct bufferevent* CHTTPServer::onConnected(struct event_base* base, void* arg)
-{
-    CHTTPServer* self = (CHTTPServer*)arg;
-    bufferevent* bv = nullptr;
-    if (self->m_ishttps) {
-        bv = CWorker::MAIN_CONTEX->Bvsocket(-1, nullptr, nullptr, nullptr, nullptr, CSSLContex::Instance().CreateOneSSL(), true);
-    } else {
-        bv = CWorker::MAIN_CONTEX->Bvsocket(-1, nullptr, nullptr, nullptr, nullptr, nullptr, true);
-    }
-
-    return bv;
-}
-
-std::optional<const char*> CHTTPServer::GetValueByKey(evkeyvalq* headers, const char* key)
-{
-    if (!headers || !key)
-        return std::nullopt;
-    auto val = evhttp_find_header(headers, key);
-    return val ? std::optional(val) : std::nullopt;
-}
-
 static const std::map<std::string, std::string> MIME = {
     { ".ai", "application/postscript; charset=utf-8" },
     { ".aif", "audio/x-aiff; charset=utf-8" },
@@ -245,6 +207,44 @@ static const std::map<std::string, std::string> MIME = {
     { ".zip", "application/zip; charset=utf-8" }
 };
 
+CHTTPServer::~CHTTPServer()
+{
+    destroy();
+}
+
+CHTTPServer::CHTTPServer(CHTTPServer&& rhs)
+{
+}
+
+void CHTTPServer::destroy()
+{
+    if (m_http) {
+        evhttp_free(m_http);
+        m_http = nullptr;
+    }
+}
+
+struct bufferevent* CHTTPServer::onConnected(struct event_base* base, void* arg)
+{
+    CHTTPServer* self = (CHTTPServer*)arg;
+    bufferevent* bv = nullptr;
+    if (self->m_ishttps) {
+        bv = CWorker::MAIN_CONTEX->Bvsocket(-1, nullptr, nullptr, nullptr, nullptr, CSSLContex::Instance().CreateOneSSL(), true);
+    } else {
+        bv = CWorker::MAIN_CONTEX->Bvsocket(-1, nullptr, nullptr, nullptr, nullptr, nullptr, true);
+    }
+
+    return bv;
+}
+
+std::optional<const char*> CHTTPServer::GetValueByKey(evkeyvalq* headers, const char* key)
+{
+    if (!headers || !key)
+        return std::nullopt;
+    auto val = evhttp_find_header(headers, key);
+    return val ? std::optional(val) : std::nullopt;
+}
+
 static void onDefault(struct evhttp_request* req, void* arg)
 {
     const char* uri = evhttp_request_get_uri(req);
@@ -278,8 +278,9 @@ static void onDefault(struct evhttp_request* req, void* arg)
             evhttp_uri_free(deuri);
         return;
     }
-    auto fd = open(f.c_str(), O_RDONLY);
-    if (fd > 0) {
+    auto hfd = fopen(f.c_str(), "r");
+    if (hfd) {
+        auto fd = fileno(hfd);
         auto& contentype = it->second;
         evhttp_add_header(evhttp_request_get_output_headers(req), "content-type", contentype.c_str());
         if (MYARGS.IsAllowOrigin && MYARGS.IsAllowOrigin.value())
@@ -296,22 +297,17 @@ static void onDefault(struct evhttp_request* req, void* arg)
         evhttp_uri_free(deuri);
 }
 
-void CHTTPServer::onJsonBindCallback(evhttp_request* req, void* arg)
+void CHTTPServer::onBindCallback(evhttp_request* req, void* arg)
 {
     auto filters = (FilterData*)arg;
-    if (req && filters && filters->data_cb) {
-        auto cmd = evhttp_request_get_command(req);
+    if (req && filters && filters->cb) {
+        uint32_t cmd = evhttp_request_get_command(req);
         // filter
-        if (0 == (filters->filter & cmd)) {
+        if (0 == (filters->cmd & cmd)) {
             evhttp_send_error(req, HTTP_BADMETHOD, 0);
             return;
         }
-        const char* uri = evhttp_request_get_uri(req);
-        if (!uri) {
-            evhttp_send_error(req, HTTP_INTERNAL, 0);
-            return;
-        }
-        auto deuri = evhttp_uri_parse_with_flags(uri, 0);
+        auto deuri = (evhttp_uri*)evhttp_request_get_evhttp_uri(req);
         if (!deuri) {
             evhttp_send_error(req, HTTP_BADREQUEST, 0);
             return;
@@ -321,8 +317,6 @@ void CHTTPServer::onJsonBindCallback(evhttp_request* req, void* arg)
         if (auto qstr = evhttp_uri_get_query(deuri); qstr) {
             if (evhttp_parse_query_str(qstr, &qheaders) < 0) {
                 evhttp_send_error(req, HTTP_BADREQUEST, 0);
-                if (deuri)
-                    evhttp_uri_free(deuri);
                 return;
             }
         }
@@ -333,27 +327,29 @@ void CHTTPServer::onJsonBindCallback(evhttp_request* req, void* arg)
         char* data = (char*)evbuffer_pullup(buf, -1);
         int32_t dlen = evbuffer_get_length(buf);
 
-        auto r = filters->data_cb(&qheaders, headers, std::string(data, dlen));
+        auto r = filters->cb(&qheaders, headers, std::string(data, dlen));
 
         auto evb = evbuffer_new();
         evbuffer_add_printf(evb, "%s", r.data());
-        evhttp_add_header(evhttp_request_get_output_headers(req), "content-type", "application/json; charset=utf-8");
+        for (auto& [k, v] : filters->h) {
+            evhttp_add_header(evhttp_request_get_output_headers(req), k.c_str(), v.c_str());
+        }
         if (MYARGS.IsAllowOrigin && MYARGS.IsAllowOrigin.value())
             evhttp_add_header(evhttp_request_get_output_headers(req), "access-control-allow-origin", "*");
+
         evhttp_send_reply(req, HTTP_OK, "OK", evb);
+        // evhttp_send_reply(req, HTTP_MOVEPERM, "Permanent Redirect", evb);
         if (evb)
             evbuffer_free(evb);
-        if (deuri)
-            evhttp_uri_free(deuri);
         return;
     }
     evhttp_send_error(req, HTTP_INTERNAL, 0);
 }
 
-bool CHTTPServer::JsonRegister(const std::string path, const uint32_t methods, std::function<HttpCallbackType> cb)
+bool CHTTPServer::Register(const std::string path, FilterData filter)
 {
-    m_callbacks[path] = FilterData { .data_cb = cb, .filter = (evhttp_cmd_type)methods };
-    evhttp_set_cb(m_http, path.c_str(), onJsonBindCallback, &m_callbacks[path]);
+    m_callbacks[path] = filter;
+    evhttp_set_cb(m_http, path.c_str(), onBindCallback, &m_callbacks[path]);
     return true;
 }
 
@@ -418,6 +414,7 @@ bool CHTTPServer::Init(std::string host)
     }
     evhttp_set_bevcb(m_http, onConnected, this);
     evhttp_set_gencb(m_http, onDefault, this);
+    evhttp_set_default_content_type(m_http, "application/json; charset=utf-8");
     freeaddrinfo(result);
 
     return true;

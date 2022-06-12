@@ -15,6 +15,10 @@ main:
   isolate: true
   #Specify the web root directory.
   webroot: "."
+  #Redirect to url specified.
+  redirecturl: "https://dev.wgnice.com/%s"
+  redirectstatus: 301
+  #Specify the public key private key.
   certificatefile: "../config/server.crt"
   privatekeyfile: "../config/server.key"
   #Setup allow origin
@@ -26,26 +30,6 @@ main:
   mongourl: "mongodb://GAME:game12345@poker.demo.mongodb:5100,poker.demo.mongodb:5101,poker.demo.mongodb:5102/?authSource=admin&replicaSet=poker_demo"
   #Redis connect url
   redisurl: ["tcp://Ch1904@poker.demo.mongodb:5002/4"]
-  dbconf:
-    [
-      {
-        "dbname": "infomation_888",
-        "collection":
-          ["league", "event", "team", "player", "innings", "over", "ballinfo"],
-      },
-    ]
 
 #worker thread
-workers: [
-    {
-      #hosts: ["ws://*:9015", "udp://zzjs888.com:13000"],
-      hosts: ["http://*:8080", "https://*:8443"],
-      inhosts: "ws://*:9723",
-      subhosts: ["ws://feed.decimalcricket.com/api/match/feed"],
-    },
-    {
-      hosts: ["http://*:8080", "https://*:8443"],
-      inhosts: "ws://*:9723",
-      subhosts: ["ws://feed.decimalcricket.com/api/match/feed"],
-    },
-  ]
+workers: [{ hosts: ["http://*:8080", "https://*:8443"] }]
