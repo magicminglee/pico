@@ -26,6 +26,8 @@ main:
   alloworigin: true
   #Log module name
   modulename: "pico"
+  #Api Key
+  apikey: "2fw$23x@AXh8nqQ!"
   #maxframe bytes(default 64KB)
   #maxframesize: 65536
   mongourl: "mongodb://GAME:game12345@poker.demo.mongodb:5100,poker.demo.mongodb:5101,poker.demo.mongodb:5102/?authSource=admin&replicaSet=poker_demo"

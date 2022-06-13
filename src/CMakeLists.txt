@@ -56,6 +56,8 @@ find_package(Cxxopt REQUIRED)
 target_link_libraries(${PROJECT_NAME} PUBLIC Cxxopt_lib)
 find_package(Yaml REQUIRED)
 target_link_libraries(${PROJECT_NAME} PUBLIC Yaml_lib)
+find_package(Jwtcxx REQUIRED)
+target_link_libraries(${PROJECT_NAME} PUBLIC Jwtcxx_lib)
 ############################################
 
 if (CMAKE_CXX_STANDARD LESS 17)

@@ -168,6 +168,8 @@ bool CArgument::ParseYaml()
         j["redirecturl"] = RedirectUrl.value();
     if (IsForceHttps)
         j["forcehttps"] = IsForceHttps.value();
+    if (ApiKey)
+        j["apikey"] = ApiKey.value();
     auto a = nlohmann::json::array();
     for (auto&& v : Workers) {
         std::vector<std::string> hosts;

@@ -207,6 +207,30 @@ static const std::map<std::string, std::string> MIME = {
     { ".zip", "application/zip; charset=utf-8" }
 };
 
+const uint32_t PICO_HTTP_OK = 200;
+static const std::map<const uint32_t, std::string> RESPSTR = {
+    { HTTP_OK, "OK" },
+    { HTTP_NOCONTENT, "NO CONTENT" },
+    { HTTP_MOVEPERM, "MOVED PERMANENTLY" },
+    { HTTP_MOVETEMP, "MOVED TEMPORARILY" },
+    { HTTP_NOTMODIFIED, "NOT MODIFIED" },
+    { HTTP_BADREQUEST, "INVALID REQUEST" },
+    { HTTP_NOTFOUND, "NOT FOUND" },
+    { HTTP_BADMETHOD, "METHOD NOT ALLOWED" },
+    { HTTP_INTERNAL, "INTERNAL ERROR" },
+    { HTTP_SERVUNAVAIL, "NOT AVAILABLE" },
+    { HTTP_UNAUTHORIZED, "UNAUTHORIZED" },
+};
+
+std::optional<const char*> CHTTPServer::HttpReason(const uint32_t code)
+{
+    std::optional<const char*> reason;
+    if (auto it = RESPSTR.find(code); it != std::end(RESPSTR))
+        reason = it->second.c_str();
+
+    return reason;
+}
+
 CHTTPServer::~CHTTPServer()
 {
     destroy();
@@ -256,7 +280,7 @@ static void onDefault(struct evhttp_request* req, void* arg)
         auto loc = CStringTool::Format("%s%s", MYARGS.RedirectUrl.value().c_str(), uri);
         evhttp_add_header(evhttp_request_get_output_headers(req), "Location", loc.c_str());
         auto code = MYARGS.RedirectStatus.value_or(HTTP_MOVEPERM);
-        evhttp_send_reply(req, code, code == HTTP_MOVEPERM ? "Permanent Redirect" : "Temporary Redirect", nullptr);
+        evhttp_send_reply(req, code, CHTTPServer::HttpReason(code).value_or(""), nullptr);
         return;
     }
 
@@ -289,7 +313,7 @@ static void onDefault(struct evhttp_request* req, void* arg)
             evhttp_add_header(evhttp_request_get_output_headers(req), "access-control-allow-origin", "*");
         auto evb = evhttp_request_get_output_buffer(req);
         evbuffer_add_file(evb, fd, 0, fs::file_size(f));
-        evhttp_send_reply(req, HTTP_OK, "OK", evb);
+        evhttp_send_reply(req, HTTP_OK, CHTTPServer::HttpReason(HTTP_OK).value_or(""), evb);
         return;
     }
     evhttp_send_error(req, HTTP_BADREQUEST, 0);
@@ -308,12 +332,21 @@ void CHTTPServer::onBindCallback(evhttp_request* req, void* arg)
             evhttp_send_error(req, HTTP_BADMETHOD, 0);
             return;
         }
+        // decode headers
+        auto headers = evhttp_request_get_input_headers(req);
         auto deuri = (evhttp_uri*)evhttp_request_get_evhttp_uri(req);
         if (!deuri) {
             evhttp_send_error(req, HTTP_BADREQUEST, 0);
             return;
         }
-
+        // decode query string to headers
+        evkeyvalq qheaders = { 0 };
+        if (auto qstr = evhttp_uri_get_query(deuri); qstr) {
+            if (evhttp_parse_query_str(qstr, &qheaders) < 0) {
+                evhttp_send_error(req, HTTP_BADREQUEST, 0);
+                return;
+            }
+        }
         // decode http or https
         auto is_https = false;
         auto evconn = evhttp_request_get_connection(req);
@@ -327,19 +360,10 @@ void CHTTPServer::onBindCallback(evhttp_request* req, void* arg)
             auto loc = CStringTool::Format("%s%s", MYARGS.RedirectUrl.value().c_str(), uri);
             evhttp_add_header(evhttp_request_get_output_headers(req), "Location", loc.c_str());
             auto code = MYARGS.RedirectStatus.value_or(HTTP_MOVEPERM);
-            evhttp_send_reply(req, code, code == HTTP_MOVEPERM ? "Permanent Redirect" : "Temporary Redirect", nullptr);
+            evhttp_send_reply(req, code, HttpReason(code).value_or(""), nullptr);
             return;
         }
-        // decode headers
-        auto headers = evhttp_request_get_input_headers(req);
-        // decode query string to headers
-        evkeyvalq qheaders = { 0 };
-        if (auto qstr = evhttp_uri_get_query(deuri); qstr) {
-            if (evhttp_parse_query_str(qstr, &qheaders) < 0) {
-                evhttp_send_error(req, HTTP_BADREQUEST, 0);
-                return;
-            }
-        }
+
         // decode the payload
         struct evbuffer* buf = evhttp_request_get_input_buffer(req);
         char* data = (char*)evbuffer_pullup(buf, -1);
@@ -348,14 +372,14 @@ void CHTTPServer::onBindCallback(evhttp_request* req, void* arg)
         auto r = filters->cb(&qheaders, headers, std::string(data, dlen));
 
         auto evb = evbuffer_new();
-        evbuffer_add_printf(evb, "%s", r.data());
+        evbuffer_add_printf(evb, "%s", r.second.data());
         for (auto& [k, v] : filters->h) {
             evhttp_add_header(evhttp_request_get_output_headers(req), k.c_str(), v.c_str());
         }
         if (MYARGS.IsAllowOrigin && MYARGS.IsAllowOrigin.value())
             evhttp_add_header(evhttp_request_get_output_headers(req), "access-control-allow-origin", "*");
 
-        evhttp_send_reply(req, HTTP_OK, "OK", evb);
+        evhttp_send_reply(req, r.first, HttpReason(r.first).value_or(""), evb);
 
         if (evb)
             evbuffer_free(evb);

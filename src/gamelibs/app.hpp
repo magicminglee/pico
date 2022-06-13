@@ -69,6 +69,8 @@ class CApp {
                                 MYARGS.RedirectStatus = j["redirectstatus"].get<uint16_t>();
                             if (j.contains("redirecturl") && j["redirecturl"].is_string())
                                 MYARGS.RedirectUrl = j["redirecturl"].get<std::string>();
+                            if (j.contains("apikey") && j["apikey"].is_string())
+                                MYARGS.ApiKey = j["apikey"].get<std::string>();
                         }
                         CINFO("CTX:%s reload config %s", MYARGS.CTXID.c_str(), j.dump().c_str());
                     } catch (const nlohmann::json::exception& e) {
