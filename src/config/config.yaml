@@ -6,7 +6,7 @@ main:
   #Specify timezone(default CST)
   timezone: "/usr/share/zoneinfo/UTC"
   #Specify the log directory.(default current directory)
-  #logdir: "./mylog/"
+  logdir: "./mylog/"
   #Specify the server verbosity level[DEBUG INFO TRACE WARN ERROR](default INFO)
   #loglevel: "DEBUG"
   #Print log to teminal(default false)
