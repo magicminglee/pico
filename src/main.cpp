@@ -7,6 +7,7 @@ USE_NAMESPACE_FRAMEWORK
 
 void CApp::Register(std::shared_ptr<CHTTPServer> hs)
 {
+    hs->RegEvent("start", [](evkeyvalq*, evkeyvalq*, std::string_view) -> std::optional<std::pair<uint32_t, std::string>> { return std::nullopt; });
     hs->Register(
         "/game/v1/example",
         {

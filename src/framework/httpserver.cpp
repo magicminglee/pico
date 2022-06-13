@@ -347,6 +347,16 @@ void CHTTPServer::onBindCallback(evhttp_request* req, void* arg)
                 return;
             }
         }
+        // decode the payload
+        struct evbuffer* buf = evhttp_request_get_input_buffer(req);
+        char* data = (char*)evbuffer_pullup(buf, -1);
+        int32_t dlen = evbuffer_get_length(buf);
+
+        auto r = filters->self->EmitEvent("start", &qheaders, headers, std::string_view(data, dlen));
+        if (r) {
+            evhttp_send_reply(req, r.value().first, HttpReason(r.value().first).value_or(""), nullptr);
+            return;
+        }
         // decode http or https
         auto is_https = false;
         auto evconn = evhttp_request_get_connection(req);
@@ -364,22 +374,17 @@ void CHTTPServer::onBindCallback(evhttp_request* req, void* arg)
             return;
         }
 
-        // decode the payload
-        struct evbuffer* buf = evhttp_request_get_input_buffer(req);
-        char* data = (char*)evbuffer_pullup(buf, -1);
-        int32_t dlen = evbuffer_get_length(buf);
-
-        auto r = filters->cb(&qheaders, headers, std::string(data, dlen));
+        auto res = filters->cb(&qheaders, headers, std::string(data, dlen));
 
         auto evb = evbuffer_new();
-        evbuffer_add_printf(evb, "%s", r.second.data());
+        evbuffer_add_printf(evb, "%s", res.second.data());
         for (auto& [k, v] : filters->h) {
             evhttp_add_header(evhttp_request_get_output_headers(req), k.c_str(), v.c_str());
         }
         if (MYARGS.IsAllowOrigin && MYARGS.IsAllowOrigin.value())
             evhttp_add_header(evhttp_request_get_output_headers(req), "access-control-allow-origin", "*");
 
-        evhttp_send_reply(req, r.first, HttpReason(r.first).value_or(""), evb);
+        evhttp_send_reply(req, res.first, HttpReason(res.first).value_or(""), evb);
 
         if (evb)
             evbuffer_free(evb);
@@ -390,9 +395,24 @@ void CHTTPServer::onBindCallback(evhttp_request* req, void* arg)
 
 bool CHTTPServer::Register(const std::string path, FilterData filter)
 {
+    filter.self = this;
     m_callbacks[path] = filter;
     evhttp_set_cb(m_http, path.c_str(), onBindCallback, &m_callbacks[path]);
     return true;
+}
+
+bool CHTTPServer::RegEvent(std::string ename, std::function<HttpEventType> cb)
+{
+    m_ev_callbacks[ename] = std::move(cb);
+    return true;
+}
+
+std::optional<std::pair<uint32_t, std::string>> CHTTPServer::EmitEvent(std::string ename, evkeyvalq* qheaders, evkeyvalq* headers, std::string_view idata)
+{
+    if (auto it = m_ev_callbacks.find(ename); it != std::end(m_ev_callbacks)) {
+        return (it->second)(qheaders, headers, idata);
+    }
+    return std::nullopt;
 }
 
 bool CHTTPServer::Init(std::string host)

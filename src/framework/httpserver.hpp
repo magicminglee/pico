@@ -9,13 +9,14 @@ NAMESPACE_FRAMEWORK_BEGIN
 #define HTTP_UNAUTHORIZED 401
 class CHTTPServer : public CObject {
     typedef std::pair<uint32_t, std::string> HttpCallbackType(evkeyvalq*, evkeyvalq*, std::string);
-    typedef std::pair<uint32_t, std::string> HttpEventType(evkeyvalq*, evkeyvalq*, std::string);
+    typedef std::optional<std::pair<uint32_t, std::string>> HttpEventType(evkeyvalq*, evkeyvalq*, std::string_view);
 
 public:
     struct FilterData {
         uint32_t cmd;
         std::function<HttpCallbackType> cb;
         std::unordered_map<std::string, std::string> h;
+        CHTTPServer* self;
     };
 
 public:
@@ -25,6 +26,7 @@ public:
     bool Init(std::string host);
     bool Register(const std::string path, FilterData filter);
     bool RegEvent(std::string ename, std::function<HttpEventType> cb);
+    std::optional<std::pair<uint32_t, std::string>> EmitEvent(std::string ename, evkeyvalq* qheaders, evkeyvalq* headers, std::string_view idata);
     static std::optional<const char*> GetValueByKey(evkeyvalq* headers, const char* key);
     static std::optional<const char*> HttpReason(const uint32_t code);
 
