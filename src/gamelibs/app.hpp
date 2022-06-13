@@ -49,18 +49,28 @@ class CApp {
                     try {
                         auto j = nlohmann::json::parse(std::move(data));
                         if (j["cmd"].is_string() && j["cmd"].get_ref<const std::string&>() == "reload") {
-                            MYARGS.LogLevel = j["loglevel"].get<std::string>();
-                            XLOG::WARN_W.UpdateLogLevel(XLOG::LogWriter::LogStrToLogLevel(MYARGS.LogLevel.value()));
-                            XLOG::INFO_W.UpdateLogLevel(XLOG::LogWriter::LogStrToLogLevel(MYARGS.LogLevel.value()));
-                            XLOG::DBLOG_W.UpdateLogLevel(XLOG::LogWriter::LogStrToLogLevel(MYARGS.LogLevel.value()));
-                            MYARGS.CertificateFile = j["certificatefile"].get<std::string>();
-                            MYARGS.PrivateKeyFile = j["privatekeyfile"].get<std::string>();
-                            if (!CSSLContex::Instance().LoadCertificateAndPrivateKey(MYARGS.CertificateFile.value(), MYARGS.PrivateKeyFile.value())) {
-                                CERROR("CTX:%s load ssl certificate and private key fail", MYARGS.CTXID.c_str());
+                            if (j.contains("loglevel") && j["loglevel"].is_string()) {
+                                MYARGS.LogLevel = j["loglevel"].get<std::string>();
+                                XLOG::WARN_W.UpdateLogLevel(XLOG::LogWriter::LogStrToLogLevel(MYARGS.LogLevel.value()));
+                                XLOG::INFO_W.UpdateLogLevel(XLOG::LogWriter::LogStrToLogLevel(MYARGS.LogLevel.value()));
+                                XLOG::DBLOG_W.UpdateLogLevel(XLOG::LogWriter::LogStrToLogLevel(MYARGS.LogLevel.value()));
                             }
-                            MYARGS.IsAllowOrigin = j["alloworigin"].get<bool>();
+                            if (j.contains("certificatefile") && j["certificatefile"].is_string()
+                                && j.contains("privatekeyfile") && j["privatekeyfile"].is_string()) {
+                                MYARGS.CertificateFile = j["certificatefile"].get<std::string>();
+                                MYARGS.PrivateKeyFile = j["privatekeyfile"].get<std::string>();
+                                CSSLContex::Instance().LoadCertificateAndPrivateKey(MYARGS.CertificateFile.value(), MYARGS.PrivateKeyFile.value());
+                            }
+                            if (j.contains("alloworigin") && j["alloworigin"].is_boolean())
+                                MYARGS.IsAllowOrigin = j["alloworigin"].get<bool>();
+                            if (j.contains("forcehttps") && j["forcehttps"].is_boolean())
+                                MYARGS.IsForceHttps = j["forcehttps"].get<bool>();
+                            if (j.contains("redirectstatus") && j["redirectstatus"].is_number_unsigned())
+                                MYARGS.RedirectStatus = j["redirectstatus"].get<uint16_t>();
+                            if (j.contains("redirecturl") && j["redirecturl"].is_string())
+                                MYARGS.RedirectUrl = j["redirecturl"].get<std::string>();
                         }
-                        CINFO("CTX:%s external cmd %s", MYARGS.CTXID.c_str(), j.dump().c_str());
+                        CINFO("CTX:%s reload config %s", MYARGS.CTXID.c_str(), j.dump().c_str());
                     } catch (const nlohmann::json::exception& e) {
                         CERROR("CTX:%s %s json exception %s", MYARGS.CTXID.c_str(), __FUNCTION__, e.what());
                     }

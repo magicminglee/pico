@@ -31,12 +31,12 @@ bool CSSLContex::LoadCertificateAndPrivateKey(const std::string certificate_chai
 
     (void)SSL_CTX_set_ecdh_auto(m_ssl_ctx, 1);
 
-    if (SSL_CTX_use_certificate_chain_file(m_ssl_ctx, certificate_chain_file.c_str()) <= 0) {
+    if (!certificate_chain_file.empty() && SSL_CTX_use_certificate_chain_file(m_ssl_ctx, certificate_chain_file.c_str()) <= 0) {
         CERROR("load certificate chain file %s failed!!!", certificate_chain_file.c_str());
         return false;
     }
 
-    if (SSL_CTX_use_PrivateKey_file(m_ssl_ctx, privatekey_file.c_str(), SSL_FILETYPE_PEM) <= 0) {
+    if (!privatekey_file.empty() && SSL_CTX_use_PrivateKey_file(m_ssl_ctx, privatekey_file.c_str(), SSL_FILETYPE_PEM) <= 0) {
         CERROR("load private key file %s failed!!!", privatekey_file.c_str());
         return false;
     }

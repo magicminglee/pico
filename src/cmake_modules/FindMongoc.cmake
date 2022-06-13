@@ -1,16 +1,3 @@
-# Find mongoc
-#
-# Find the mongoc includes and library
-#
-# if you nee to add a custom library search path, do it via via
-# CMAKE_PREFIX_PATH
-#
-# This module defines MONGOC_INCLUDE_DIRS, where to find header, etc.
-# MONGOC_LIBRARIES, the libraries needed to use mongoc. MONGOC_FOUND, If
-# false, do not try to use mongoc. 
-# Mongoc_lib - The imported target library.
-
-# only look in default directories
 find_path(MONGOC_INCLUDE_DIRS
           NAMES mongoc.h
           DOC "mongoc include dir"
@@ -18,8 +5,6 @@ find_path(MONGOC_INCLUDE_DIRS
 
 find_library(MONGOC_LIBRARIES NAMES mongoc-1.0 DOC "mongoc library" PATH_SUFFIXES mongoc/lib)
 
-# handle the QUIETLY and REQUIRED arguments and set MONGOC_FOUND to TRUE if all
-# listed variables are TRUE, hide their existence from configuration view
 include(FindPackageHandleStandardArgs)
 find_package_handle_standard_args(Mongoc
                                   DEFAULT_MSG
@@ -46,8 +31,6 @@ find_path(BSON_INCLUDE_DIRS
 
 find_library(BSON_LIBRARIES NAMES bson-1.0 DOC "bson library" PATH_SUFFIXES mongoc/lib)
 
-# handle the QUIETLY and REQUIRED arguments and set MONGOC_FOUND to TRUE if all
-# listed variables are TRUE, hide their existence from configuration view
 include(FindPackageHandleStandardArgs)
 find_package_handle_standard_args(Bson
                                   DEFAULT_MSG

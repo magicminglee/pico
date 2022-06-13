@@ -23,6 +23,9 @@ public:
     std::optional<std::string> ConfDir;
     std::optional<bool> IsVerbose;
     std::optional<bool> IsIsolate;
+    std::optional<bool> IsForceHttps;
+    std::optional<uint16_t> RedirectStatus;
+    std::optional<std::string> RedirectUrl;
     std::optional<std::string> WebRootDir;
     std::optional<std::string> CertificateFile;
     std::optional<std::string> PrivateKeyFile;

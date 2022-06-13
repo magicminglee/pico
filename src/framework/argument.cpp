@@ -5,7 +5,10 @@
 
 #include "yaml-cpp/yaml.h"
 
+#include <filesystem>
+
 NAMESPACE_FRAMEWORK_BEGIN
+namespace fs = std::filesystem;
 
 bool CArgument::ParseArg(int argc, char** argv, const std::string pgname, const std::string pgdesc)
 {
@@ -49,6 +52,8 @@ bool CArgument::ParseYaml()
     }
     if (config["main"] && config["main"].IsMap() && config["main"]["logdir"]) {
         LogDir = config["main"]["logdir"].as<std::string>();
+    } else {
+        LogDir = fs::current_path();
     }
     if (config["main"] && config["main"].IsMap() && config["main"]["confdir"]) {
         ConfDir = config["main"]["confdir"].as<std::string>();
@@ -62,8 +67,19 @@ bool CArgument::ParseYaml()
     if (config["main"] && config["main"].IsMap() && config["main"]["isolate"]) {
         IsIsolate = config["main"]["isolate"].as<bool>();
     }
+    if (config["main"] && config["main"].IsMap() && config["main"]["forcehttps"]) {
+        IsForceHttps = config["main"]["forcehttps"].as<bool>();
+    }
+    if (config["main"] && config["main"].IsMap() && config["main"]["redirecturl"]) {
+        RedirectUrl = config["main"]["redirecturl"].as<std::string>();
+    }
+    if (config["main"] && config["main"].IsMap() && config["main"]["redirectstatus"]) {
+        RedirectStatus = config["main"]["redirectstatus"].as<std::uint16_t>();
+    }
     if (config["main"] && config["main"].IsMap() && config["main"]["webroot"]) {
         WebRootDir = config["main"]["webroot"].as<std::string>();
+    } else {
+        WebRootDir = fs::current_path();
     }
     if (config["main"] && config["main"].IsMap() && config["main"]["certificatefile"]) {
         CertificateFile = config["main"]["certificatefile"].as<std::string>();
@@ -136,10 +152,22 @@ bool CArgument::ParseYaml()
 
     nlohmann::json j;
     j["cmd"] = "reload";
-    j["loglevel"] = LogLevel.value();
-    j["certificatefile"] = CertificateFile.value();
-    j["privatekeyfile"] = PrivateKeyFile.value();
-    j["alloworigin"] = IsAllowOrigin.value();
+    if (LogLevel)
+        j["loglevel"] = LogLevel.value();
+    if (CertificateFile)
+        j["certificatefile"] = CertificateFile.value();
+    if (PrivateKeyFile)
+        j["privatekeyfile"] = PrivateKeyFile.value();
+    if (IsAllowOrigin)
+        j["alloworigin"] = IsAllowOrigin.value();
+    if (IsForceHttps)
+        j["forcehttps"] = IsForceHttps.value();
+    if (RedirectStatus)
+        j["redirectstatus"] = RedirectStatus.value();
+    if (RedirectUrl)
+        j["redirecturl"] = RedirectUrl.value();
+    if (IsForceHttps)
+        j["forcehttps"] = IsForceHttps.value();
     auto a = nlohmann::json::array();
     for (auto&& v : Workers) {
         std::vector<std::string> hosts;

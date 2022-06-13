@@ -226,15 +226,8 @@ void CHTTPServer::destroy()
 
 struct bufferevent* CHTTPServer::onConnected(struct event_base* base, void* arg)
 {
-    CHTTPServer* self = (CHTTPServer*)arg;
-    bufferevent* bv = nullptr;
-    if (self->m_ishttps) {
-        bv = CWorker::MAIN_CONTEX->Bvsocket(-1, nullptr, nullptr, nullptr, nullptr, CSSLContex::Instance().CreateOneSSL(), true);
-    } else {
-        bv = CWorker::MAIN_CONTEX->Bvsocket(-1, nullptr, nullptr, nullptr, nullptr, nullptr, true);
-    }
-
-    return bv;
+    bool* ishttps = (bool*)arg;
+    return CWorker::MAIN_CONTEX->Bvsocket(-1, nullptr, nullptr, nullptr, nullptr, *ishttps ? CSSLContex::Instance().CreateOneSSL() : nullptr, true);
 }
 
 std::optional<const char*> CHTTPServer::GetValueByKey(evkeyvalq* headers, const char* key)
@@ -247,12 +240,27 @@ std::optional<const char*> CHTTPServer::GetValueByKey(evkeyvalq* headers, const 
 
 static void onDefault(struct evhttp_request* req, void* arg)
 {
-    const char* uri = evhttp_request_get_uri(req);
-    if (!uri) {
-        evhttp_send_error(req, HTTP_INTERNAL, 0);
+    if (!req)
+        return;
+
+    // decode http or https
+    auto is_https = false;
+    auto evconn = evhttp_request_get_connection(req);
+    if (evconn) {
+        if (auto bv = evhttp_connection_get_bufferevent(evconn); bv && bufferevent_openssl_get_ssl(bv)) {
+            is_https = true;
+        }
+    }
+    auto uri = evhttp_request_get_uri(req);
+    if (uri && !is_https && MYARGS.IsForceHttps && MYARGS.IsForceHttps.value() && MYARGS.RedirectUrl && !MYARGS.RedirectUrl.value().empty()) {
+        auto loc = CStringTool::Format("%s%s", MYARGS.RedirectUrl.value().c_str(), uri);
+        evhttp_add_header(evhttp_request_get_output_headers(req), "Location", loc.c_str());
+        auto code = MYARGS.RedirectStatus.value_or(HTTP_MOVEPERM);
+        evhttp_send_reply(req, code, code == HTTP_MOVEPERM ? "Permanent Redirect" : "Temporary Redirect", nullptr);
         return;
     }
-    evhttp_uri* deuri = evhttp_uri_parse_with_flags(uri, 0);
+
+    auto deuri = (evhttp_uri*)evhttp_request_get_evhttp_uri(req);
     if (!deuri) {
         evhttp_send_error(req, HTTP_BADREQUEST, 0);
         return;
@@ -260,22 +268,16 @@ static void onDefault(struct evhttp_request* req, void* arg)
     auto pathuri = evhttp_uri_get_path(deuri);
     if (!pathuri) {
         evhttp_send_error(req, HTTP_BADREQUEST, 0);
-        if (deuri)
-            evhttp_uri_free(deuri);
         return;
     }
-    fs::path f = MYARGS.WebRootDir.value_or(".") + pathuri;
+    fs::path f = MYARGS.WebRootDir.value_or(fs::current_path()) + pathuri;
     if (!fs::exists(f)) {
         evhttp_send_error(req, HTTP_NOTFOUND, 0);
-        if (deuri)
-            evhttp_uri_free(deuri);
         return;
     }
     auto it = MIME.find(f.extension());
     if (it == std::end(MIME)) {
         evhttp_send_error(req, HTTP_NOTFOUND, 0);
-        if (deuri)
-            evhttp_uri_free(deuri);
         return;
     }
     auto hfd = fopen(f.c_str(), "r");
@@ -288,19 +290,18 @@ static void onDefault(struct evhttp_request* req, void* arg)
         auto evb = evhttp_request_get_output_buffer(req);
         evbuffer_add_file(evb, fd, 0, fs::file_size(f));
         evhttp_send_reply(req, HTTP_OK, "OK", evb);
-        if (deuri)
-            evhttp_uri_free(deuri);
         return;
     }
     evhttp_send_error(req, HTTP_BADREQUEST, 0);
-    if (deuri)
-        evhttp_uri_free(deuri);
 }
 
 void CHTTPServer::onBindCallback(evhttp_request* req, void* arg)
 {
+    if (!req)
+        return;
+
     auto filters = (FilterData*)arg;
-    if (req && filters && filters->cb) {
+    if (filters && filters->cb) {
         uint32_t cmd = evhttp_request_get_command(req);
         // filter
         if (0 == (filters->cmd & cmd)) {
@@ -312,6 +313,25 @@ void CHTTPServer::onBindCallback(evhttp_request* req, void* arg)
             evhttp_send_error(req, HTTP_BADREQUEST, 0);
             return;
         }
+
+        // decode http or https
+        auto is_https = false;
+        auto evconn = evhttp_request_get_connection(req);
+        if (evconn) {
+            if (auto bv = evhttp_connection_get_bufferevent(evconn); bv && bufferevent_openssl_get_ssl(bv)) {
+                is_https = true;
+            }
+        }
+        auto uri = evhttp_request_get_uri(req);
+        if (uri && !is_https && MYARGS.IsForceHttps && MYARGS.IsForceHttps.value() && MYARGS.RedirectUrl && !MYARGS.RedirectUrl.value().empty()) {
+            auto loc = CStringTool::Format("%s%s", MYARGS.RedirectUrl.value().c_str(), uri);
+            evhttp_add_header(evhttp_request_get_output_headers(req), "Location", loc.c_str());
+            auto code = MYARGS.RedirectStatus.value_or(HTTP_MOVEPERM);
+            evhttp_send_reply(req, code, code == HTTP_MOVEPERM ? "Permanent Redirect" : "Temporary Redirect", nullptr);
+            return;
+        }
+        // decode headers
+        auto headers = evhttp_request_get_input_headers(req);
         // decode query string to headers
         evkeyvalq qheaders = { 0 };
         if (auto qstr = evhttp_uri_get_query(deuri); qstr) {
@@ -320,8 +340,6 @@ void CHTTPServer::onBindCallback(evhttp_request* req, void* arg)
                 return;
             }
         }
-        // decode headers
-        auto headers = evhttp_request_get_input_headers(req);
         // decode the payload
         struct evbuffer* buf = evhttp_request_get_input_buffer(req);
         char* data = (char*)evbuffer_pullup(buf, -1);
@@ -338,7 +356,7 @@ void CHTTPServer::onBindCallback(evhttp_request* req, void* arg)
             evhttp_add_header(evhttp_request_get_output_headers(req), "access-control-allow-origin", "*");
 
         evhttp_send_reply(req, HTTP_OK, "OK", evb);
-        // evhttp_send_reply(req, HTTP_MOVEPERM, "Permanent Redirect", evb);
+
         if (evb)
             evbuffer_free(evb);
         return;
@@ -412,7 +430,7 @@ bool CHTTPServer::Init(std::string host)
         destroy();
         return false;
     }
-    evhttp_set_bevcb(m_http, onConnected, this);
+    evhttp_set_bevcb(m_http, onConnected, &m_ishttps);
     evhttp_set_gencb(m_http, onDefault, this);
     evhttp_set_default_content_type(m_http, "application/json; charset=utf-8");
     freeaddrinfo(result);

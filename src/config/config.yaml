@@ -5,19 +5,20 @@ main:
   id: 1
   #Specify timezone(default CST)
   timezone: "/usr/share/zoneinfo/UTC"
-  #Specify the log directory.
-  logdir: "./mylog/"
-  #Specify the server verbosity level(DEBUG INFO TRACE WARN ERROR)
-  loglevel: "DEBUG"
-  #Print log to teminal
+  #Specify the log directory.(default current directory)
+  #logdir: "./mylog/"
+  #Specify the server verbosity level[DEBUG INFO TRACE WARN ERROR](default INFO)
+  #loglevel: "DEBUG"
+  #Print log to teminal(default false)
   verbose: true
   #Split log file when file is larger than 64MB
   isolate: true
-  #Specify the web root directory.
-  webroot: "."
+  #Specify the web root directory(default current directory)
+  #webroot: "./"
   #Redirect to url specified.
-  redirecturl: "https://dev.wgnice.com/%s"
-  redirectstatus: 301
+  redirecturl: "https://dev.wgnice.com:8443"
+  redirectstatus: 302
+  #forcehttps: true
   #Specify the public key private key.
   certificatefile: "../config/server.crt"
   privatekeyfile: "../config/server.key"
@@ -25,11 +26,15 @@ main:
   alloworigin: true
   #Log module name
   modulename: "pico"
-  #maxframe size(bytes)
-  maxframesize: 65536
+  #maxframe bytes(default 64KB)
+  #maxframesize: 65536
   mongourl: "mongodb://GAME:game12345@poker.demo.mongodb:5100,poker.demo.mongodb:5101,poker.demo.mongodb:5102/?authSource=admin&replicaSet=poker_demo"
   #Redis connect url
   redisurl: ["tcp://Ch1904@poker.demo.mongodb:5002/4"]
 
 #worker thread
-workers: [{ hosts: ["http://*:8080", "https://*:8443"] }]
+workers:
+  [
+    { hosts: ["http://*:8080", "https://*:8443"] },
+    { hosts: ["http://*:8080", "https://*:8443"] },
+  ]
