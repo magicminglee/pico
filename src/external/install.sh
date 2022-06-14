@@ -1,25 +1,26 @@
 #!/bin/bash
 
-PLAFORM=`uname`
+PLAFORM=$(uname)
 
-ROOT_DIR_PATH=`pwd`
-OPENSSL_INSTALL_PATH=`pwd`"/openssl/"
-EVENT_INSTALL_PATH=`pwd`"/libevent/"
-CXXOPT_INSTALL_PATH=`pwd`"/cxxopt/"
-YAML_INSTALL_PATH=`pwd`"/yaml/"
-JSON_INSTALL_PATH=`pwd`"/json/"
-PHR_INSTALL_PATH=`pwd`"/phr/"
-XLOG_INSTALL_PATH=`pwd`"/xlog/"
-PROTOBUF_INSTALL_PATH=`pwd`"/protobuf/"
-HIREDIS_INSTALL_PATH=`pwd`"/hiredis/"
-REDISCXX_INSTALL_PATH=`pwd`"/rediscxx/"
-SASL2_INSTALL_PATH=`pwd`"/sasl2/"
-SASL2_INCLUDE_PATH=`pwd`"/sasl2/include/"
-SASL2_LIB_PATH=`pwd`"/sasl2/lib/"
-MONGOC_INSTALL_PATH=`pwd`"/mongoc/"
-MONGOCXX_INSTALL_PATH=`pwd`"/mongocxx/"
-FMT_INSTALL_PATH=`pwd`"/fmt/"
-CLICKHOUSE_INSTALL_PATH=`pwd`"/clickhousecxx/"
+ROOT_DIR_PATH=$(pwd)
+OPENSSL_INSTALL_PATH=$(pwd)"/openssl/"
+EVENT_INSTALL_PATH=$(pwd)"/libevent/"
+CXXOPT_INSTALL_PATH=$(pwd)"/cxxopt/"
+YAML_INSTALL_PATH=$(pwd)"/yaml/"
+JSON_INSTALL_PATH=$(pwd)"/json/"
+PHR_INSTALL_PATH=$(pwd)"/phr/"
+XLOG_INSTALL_PATH=$(pwd)"/xlog/"
+PROTOBUF_INSTALL_PATH=$(pwd)"/protobuf/"
+HIREDIS_INSTALL_PATH=$(pwd)"/hiredis/"
+REDISCXX_INSTALL_PATH=$(pwd)"/rediscxx/"
+SASL2_INSTALL_PATH=$(pwd)"/sasl2/"
+SASL2_INCLUDE_PATH=$(pwd)"/sasl2/include/"
+SASL2_LIB_PATH=$(pwd)"/sasl2/lib/"
+MONGOC_INSTALL_PATH=$(pwd)"/mongoc/"
+MONGOCXX_INSTALL_PATH=$(pwd)"/mongocxx/"
+FMT_INSTALL_PATH=$(pwd)"/fmt/"
+CLICKHOUSE_INSTALL_PATH=$(pwd)"/clickhousecxx/"
+JWTCPP_INSTALL_PATH=$(pwd)"/jwt-cpp/"
 
 #openssl
 tar xvzf openssl-OpenSSL_1_1_1l.tar.gz
@@ -103,7 +104,7 @@ rm -rf redis-plus-plus-1.3.3
 
 #mongoc
 rm -rf ${MONGOC_INSTALL_PATH}
-tar xvzf mongo-c-driver-1.21.1.tar.gz 
+tar xvzf mongo-c-driver-1.21.1.tar.gz
 mkdir mongo-c-driver-1.21.1/cmake-build
 cd mongo-c-driver-1.21.1/cmake-build
 if [ "${PLAFORM}" = "Darwin" ]; then
@@ -143,6 +144,14 @@ cd build
 make -j4 && make install
 cd ${ROOT_DIR_PATH}
 rm -rf picohttpparser-1.0
+
+#jwt-cpp
+rm -rf ${JWTCPP_INSTALL_PATH}
+tar xvzf jwt-cpp-0.6.0.tar.gz
+mkdir -pv ${JWTCPP_INSTALL_PATH}
+cp jwt-cpp-0.6.0/include ${JWTCPP_INSTALL_PATH} -R
+cd ${ROOT_DIR_PATH}
+rm -rf jwt-cpp-0.6.0
 
 #clickhouse
 #tar xvzf clickhouse-cpp-2.1.0.tar.gz
