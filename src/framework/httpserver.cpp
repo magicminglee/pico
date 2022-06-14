@@ -207,7 +207,6 @@ static const std::map<std::string, std::string> MIME = {
     { ".zip", "application/zip; charset=utf-8" }
 };
 
-const uint32_t PICO_HTTP_OK = 200;
 static const std::map<const uint32_t, std::string> RESPSTR = {
     { HTTP_OK, "OK" },
     { HTTP_NOCONTENT, "NO CONTENT" },
@@ -339,6 +338,11 @@ void CHTTPServer::onBindCallback(evhttp_request* req, void* arg)
             evhttp_send_error(req, HTTP_BADREQUEST, 0);
             return;
         }
+        auto path = evhttp_uri_get_path(deuri);
+        if (!path) {
+            evhttp_send_error(req, HTTP_BADREQUEST, 0);
+            return;
+        }
         // decode query string to headers
         evkeyvalq qheaders = { 0 };
         if (auto qstr = evhttp_uri_get_query(deuri); qstr) {
@@ -352,7 +356,8 @@ void CHTTPServer::onBindCallback(evhttp_request* req, void* arg)
         char* data = (char*)evbuffer_pullup(buf, -1);
         int32_t dlen = evbuffer_get_length(buf);
 
-        auto r = filters->self->EmitEvent("start", &qheaders, headers, std::string_view(data, dlen));
+        RequestData rd = { .qheaders = &qheaders, .headers = headers, .path = path };
+        auto r = filters->self->EmitEvent("start", rd);
         if (r) {
             evhttp_send_reply(req, r.value().first, HttpReason(r.value().first).value_or(""), nullptr);
             return;
@@ -407,10 +412,10 @@ bool CHTTPServer::RegEvent(std::string ename, std::function<HttpEventType> cb)
     return true;
 }
 
-std::optional<std::pair<uint32_t, std::string>> CHTTPServer::EmitEvent(std::string ename, evkeyvalq* qheaders, evkeyvalq* headers, std::string_view idata)
+std::optional<std::pair<uint32_t, std::string>> CHTTPServer::EmitEvent(std::string ename, const RequestData& rd)
 {
     if (auto it = m_ev_callbacks.find(ename); it != std::end(m_ev_callbacks)) {
-        return (it->second)(qheaders, headers, idata);
+        return (it->second)(rd);
     }
     return std::nullopt;
 }
