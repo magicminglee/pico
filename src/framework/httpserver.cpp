@@ -233,7 +233,7 @@ std::optional<int64_t> CGlobalData::GetUid() const
     return uid;
 }
 
-std::optional<std::string_view> CGlobalData::GetQueryByKey(const char* key) const
+std::optional<std::string> CGlobalData::GetQueryByKey(const char* key) const
 {
     if (!key || !qheaders)
         return std::nullopt;
@@ -241,7 +241,7 @@ std::optional<std::string_view> CGlobalData::GetQueryByKey(const char* key) cons
     return val ? std::optional(val) : std::nullopt;
 }
 
-std::optional<std::string_view> CGlobalData::GetHeaderByKey(const char* key) const
+std::optional<std::string> CGlobalData::GetHeaderByKey(const char* key) const
 {
     if (!key || !headers)
         return std::nullopt;
@@ -249,12 +249,12 @@ std::optional<std::string_view> CGlobalData::GetHeaderByKey(const char* key) con
     return val ? std::optional(val) : std::nullopt;
 }
 
-std::optional<std::string_view> CGlobalData::GetRequestPath() const
+std::optional<std::string> CGlobalData::GetRequestPath() const
 {
     return path;
 }
 
-std::optional<std::string_view> CGlobalData::GetRequestBody() const
+std::optional<std::string> CGlobalData::GetRequestBody() const
 {
     return data;
 }
@@ -390,7 +390,7 @@ void CHTTPServer::onBindCallback(evhttp_request* req, void* arg)
         char* data = (char*)evbuffer_pullup(buf, -1);
         int32_t dlen = evbuffer_get_length(buf);
 
-        ghttp::CGlobalData g = { .qheaders = headers, .headers = headers, .path = std::string_view(path), .data = std::string_view(data, dlen) };
+        ghttp::CGlobalData g = { .qheaders = headers, .headers = headers, .path = std::string(path), .data = std::string(data, dlen) };
         auto r = filters->self->EmitEvent("start", &g);
         if (r) {
             evhttp_send_reply(req, r.value().first, ghttp::HttpReason(r.value().first).value_or(""), nullptr);

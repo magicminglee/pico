@@ -15,16 +15,16 @@ public:
     CGlobalData() = default;
     void SetUid(const int64_t uid);
     std::optional<int64_t> GetUid() const;
-    std::optional<std::string_view> GetQueryByKey(const char* key) const;
-    std::optional<std::string_view> GetHeaderByKey(const char* key) const;
-    std::optional<std::string_view> GetRequestPath() const;
-    std::optional<std::string_view> GetRequestBody() const;
+    std::optional<std::string> GetQueryByKey(const char* key) const;
+    std::optional<std::string> GetHeaderByKey(const char* key) const;
+    std::optional<std::string> GetRequestPath() const;
+    std::optional<std::string> GetRequestBody() const;
 
 public:
     std::optional<evkeyvalq*> qheaders;
     std::optional<evkeyvalq*> headers;
-    std::optional<std::string_view> path;
-    std::optional<std::string_view> data;
+    std::optional<std::string> path;
+    std::optional<std::string> data;
     std::optional<int64_t> uid;
 };
 }

@@ -29,7 +29,7 @@ main:
   #Api Key
   apikey: "2fw$23x@AXh8nqQ!"
   #token expire time(minutes)
-  tokenexpire: 30
+  tokenexpire: 1440
   #maxframe bytes(default 64KB)
   #maxframesize: 65536
   #Redis connect url
@@ -37,10 +37,7 @@ main:
   #Mongodb connect url
   mongourl: "mongodb://GAME:game12345@poker.demo.mongodb:5100,poker.demo.mongodb:5101,poker.demo.mongodb:5102/?authSource=admin&replicaSet=poker_demo"
   dbconf: [{ "dbname": "global_999", "collection": ["users", "uniqueid"] }]
-
-#worker thread
-workers:
-  [
-    { hosts: ["http://*:9020", "https://*:9021"] },
-    { hosts: ["http://*:9020", "https://*:9021"] },
-  ]
+  #Worker listenning host
+  hosts: ["http://*:9020", "https://*:9021"]
+  #Worker number(default 1)
+  workers: 2

@@ -41,7 +41,7 @@ void CApp::Register(std::shared_ptr<CHTTPServer> hs)
     hs->RegEvent("start",
         [](ghttp::CGlobalData* g) -> std::optional<std::pair<uint32_t, std::string>> {
             if (g->GetRequestPath().value_or("") == "/game/v1/login") {
-                CINFO("CTX:%s Http Request api %s body %s", MYARGS.CTXID.c_str(), g->GetRequestBody().value_or("").data(), g->GetRequestBody().value_or("").data());
+                CINFO("CTX:%s Http Request api %s body %s", MYARGS.CTXID.c_str(), g->GetRequestPath().value_or("").data(), g->GetRequestBody().value_or("").data());
                 return std::nullopt;
             }
             auto auth = g->GetHeaderByKey("Authorization");
@@ -59,7 +59,7 @@ void CApp::Register(std::shared_ptr<CHTTPServer> hs)
                         if (e.first == "uid")
                             g->SetUid(e.second.as_int());
                     }
-                    CINFO("CTX:%s Http Request api %s body %s", MYARGS.CTXID.c_str(), g->GetRequestBody().value_or("").data(), g->GetRequestBody().value_or("").data());
+                    CINFO("CTX:%s Http Request api %s body %s", MYARGS.CTXID.c_str(), g->GetRequestPath().value_or("").data(), g->GetRequestBody().value_or("").data());
                     return std::nullopt;
                 }
             } catch (const std::exception& e) {

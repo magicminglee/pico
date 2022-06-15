@@ -134,20 +134,16 @@ bool CArgument::ParseYaml()
         TokenExpire = config["main"]["tokenexpire"].as<uint32_t>();
     }
 
-    if (config["workers"] && config["workers"].IsSequence()) {
-        Workers.clear();
-        for (auto&& v : config["workers"]) {
-            if (v.IsMap()) {
+    if (config["main"] && config["main"].IsMap() && config["main"]["hosts"] && config["main"]["hosts"].IsSequence()) {
+        auto n = 1;
+        if (config["main"] && config["main"].IsMap() && config["main"]["workers"]) {
+            n = config["main"]["workers"].as<int32_t>();
+        }
+        if (Workers.empty()) {
+            for (auto i = 0; i < n; ++i) {
                 auto& w = Workers.emplace_back();
-                if (v["hosts"] && v["hosts"].IsSequence()) {
-                    for (auto&& vv : v["hosts"])
-                        w.Host.push_back(vv.as<std::string>());
-                }
-                if (v["inhosts"])
-                    w.InHost = v["inhosts"].as<std::string>();
-                if (v["subhosts"] && v["subhosts"].IsSequence()) {
-                    for (auto&& vv : v["subhosts"])
-                        w.SubHost.push_back(vv.as<std::string>());
+                for (auto&& v : config["main"]["hosts"]) {
+                    w.Host.push_back(v.as<std::string>());
                 }
             }
         }
