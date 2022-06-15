@@ -39,6 +39,7 @@ public:
     std::vector<std::string> DbName;
     std::vector<std::vector<std::string>> DbColl;
     std::optional<std::string> ApiKey;
+    std::optional<uint32_t> TokenExpire;
     std::optional<uint32_t> MaxFrameSize;
 
     std::string CTXID;

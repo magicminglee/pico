@@ -130,6 +130,9 @@ bool CArgument::ParseYaml()
     if (config["main"] && config["main"].IsMap() && config["main"]["apikey"]) {
         ApiKey = config["main"]["apikey"].as<std::string>();
     }
+    if (config["main"] && config["main"].IsMap() && config["main"]["tokenexpire"]) {
+        TokenExpire = config["main"]["tokenexpire"].as<uint32_t>();
+    }
 
     if (config["workers"] && config["workers"].IsSequence()) {
         Workers.clear();
@@ -166,10 +169,10 @@ bool CArgument::ParseYaml()
         j["redirectstatus"] = RedirectStatus.value();
     if (RedirectUrl)
         j["redirecturl"] = RedirectUrl.value();
-    if (IsForceHttps)
-        j["forcehttps"] = IsForceHttps.value();
     if (ApiKey)
         j["apikey"] = ApiKey.value();
+    if (TokenExpire)
+        j["tokenexpire"] = TokenExpire.value();
     auto a = nlohmann::json::array();
     for (auto&& v : Workers) {
         std::vector<std::string> hosts;

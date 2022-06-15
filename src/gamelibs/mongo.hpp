@@ -36,7 +36,6 @@ namespace gamelibs {
 namespace mongo {
     // mongodb connection pool encapsulated
     using connection = mongocxx::pool::entry;
-    inline thread_local std::shared_ptr<connection> MongoCtx = nullptr;
     class CMongo : public CSingleton<CMongo> {
     public:
         CMongo();
@@ -45,12 +44,6 @@ namespace mongo {
         connection Conn()
         {
             return m_pool->acquire();
-        }
-
-        bool GetOne()
-        {
-            MongoCtx = std::make_shared<connection>(m_pool->acquire());
-            return true;
         }
 
     private:

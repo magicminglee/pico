@@ -221,13 +221,53 @@ static const std::map<const uint32_t, std::string> RESPSTR = {
     { HTTP_UNAUTHORIZED, "UNAUTHORIZED" },
 };
 
-std::optional<const char*> CHTTPServer::HttpReason(const uint32_t code)
+namespace ghttp {
+
+void CGlobalData::SetUid(const int64_t uid)
+{
+    this->uid = uid;
+}
+
+std::optional<int64_t> CGlobalData::GetUid() const
+{
+    return uid;
+}
+
+std::optional<std::string_view> CGlobalData::GetQueryByKey(const char* key) const
+{
+    if (!key || !qheaders)
+        return std::nullopt;
+    auto val = evhttp_find_header(qheaders.value(), key);
+    return val ? std::optional(val) : std::nullopt;
+}
+
+std::optional<std::string_view> CGlobalData::GetHeaderByKey(const char* key) const
+{
+    if (!key || !headers)
+        return std::nullopt;
+    auto val = evhttp_find_header(headers.value(), key);
+    return val ? std::optional(val) : std::nullopt;
+}
+
+std::optional<std::string_view> CGlobalData::GetRequestPath() const
+{
+    return path;
+}
+
+std::optional<std::string_view> CGlobalData::GetRequestBody() const
+{
+    return data;
+}
+
+std::optional<const char*> HttpReason(const uint32_t code)
 {
     std::optional<const char*> reason;
     if (auto it = RESPSTR.find(code); it != std::end(RESPSTR))
         reason = it->second.c_str();
 
     return reason;
+}
+
 }
 
 CHTTPServer::~CHTTPServer()
@@ -253,14 +293,6 @@ struct bufferevent* CHTTPServer::onConnected(struct event_base* base, void* arg)
     return CWorker::MAIN_CONTEX->Bvsocket(-1, nullptr, nullptr, nullptr, nullptr, *ishttps ? CSSLContex::Instance().CreateOneSSL() : nullptr, true);
 }
 
-std::optional<const char*> CHTTPServer::GetValueByKey(evkeyvalq* headers, const char* key)
-{
-    if (!headers || !key)
-        return std::nullopt;
-    auto val = evhttp_find_header(headers, key);
-    return val ? std::optional(val) : std::nullopt;
-}
-
 static void onDefault(struct evhttp_request* req, void* arg)
 {
     if (!req)
@@ -279,7 +311,7 @@ static void onDefault(struct evhttp_request* req, void* arg)
         auto loc = CStringTool::Format("%s%s", MYARGS.RedirectUrl.value().c_str(), uri);
         evhttp_add_header(evhttp_request_get_output_headers(req), "Location", loc.c_str());
         auto code = MYARGS.RedirectStatus.value_or(HTTP_MOVEPERM);
-        evhttp_send_reply(req, code, CHTTPServer::HttpReason(code).value_or(""), nullptr);
+        evhttp_send_reply(req, code, ghttp::HttpReason(code).value_or(""), nullptr);
         return;
     }
 
@@ -312,7 +344,7 @@ static void onDefault(struct evhttp_request* req, void* arg)
             evhttp_add_header(evhttp_request_get_output_headers(req), "access-control-allow-origin", "*");
         auto evb = evhttp_request_get_output_buffer(req);
         evbuffer_add_file(evb, fd, 0, fs::file_size(f));
-        evhttp_send_reply(req, HTTP_OK, CHTTPServer::HttpReason(HTTP_OK).value_or(""), evb);
+        evhttp_send_reply(req, HTTP_OK, ghttp::HttpReason(HTTP_OK).value_or(""), evb);
         return;
     }
     evhttp_send_error(req, HTTP_BADREQUEST, 0);
@@ -320,35 +352,37 @@ static void onDefault(struct evhttp_request* req, void* arg)
 
 void CHTTPServer::onBindCallback(evhttp_request* req, void* arg)
 {
-    if (!req)
+    if (!req) {
         return;
+    }
 
+    int errcode = HTTP_BADREQUEST;
     auto filters = (FilterData*)arg;
     if (filters && filters->cb) {
         uint32_t cmd = evhttp_request_get_command(req);
         // filter
         if (0 == (filters->cmd & cmd)) {
-            evhttp_send_error(req, HTTP_BADMETHOD, 0);
-            return;
+            errcode = HTTP_BADMETHOD;
+            goto err;
         }
         // decode headers
         auto headers = evhttp_request_get_input_headers(req);
         auto deuri = (evhttp_uri*)evhttp_request_get_evhttp_uri(req);
         if (!deuri) {
-            evhttp_send_error(req, HTTP_BADREQUEST, 0);
-            return;
+            errcode = HTTP_BADREQUEST;
+            goto err;
         }
         auto path = evhttp_uri_get_path(deuri);
         if (!path) {
-            evhttp_send_error(req, HTTP_BADREQUEST, 0);
-            return;
+            errcode = HTTP_BADREQUEST;
+            goto err;
         }
         // decode query string to headers
         evkeyvalq qheaders = { 0 };
         if (auto qstr = evhttp_uri_get_query(deuri); qstr) {
             if (evhttp_parse_query_str(qstr, &qheaders) < 0) {
-                evhttp_send_error(req, HTTP_BADREQUEST, 0);
-                return;
+                errcode = HTTP_BADREQUEST;
+                goto err;
             }
         }
         // decode the payload
@@ -356,10 +390,10 @@ void CHTTPServer::onBindCallback(evhttp_request* req, void* arg)
         char* data = (char*)evbuffer_pullup(buf, -1);
         int32_t dlen = evbuffer_get_length(buf);
 
-        RequestData rd = { .qheaders = &qheaders, .headers = headers, .path = path };
-        auto r = filters->self->EmitEvent("start", rd);
+        ghttp::CGlobalData g = { .qheaders = headers, .headers = headers, .path = std::string_view(path), .data = std::string_view(data, dlen) };
+        auto r = filters->self->EmitEvent("start", &g);
         if (r) {
-            evhttp_send_reply(req, r.value().first, HttpReason(r.value().first).value_or(""), nullptr);
+            evhttp_send_reply(req, r.value().first, ghttp::HttpReason(r.value().first).value_or(""), nullptr);
             return;
         }
         // decode http or https
@@ -375,11 +409,11 @@ void CHTTPServer::onBindCallback(evhttp_request* req, void* arg)
             auto loc = CStringTool::Format("%s%s", MYARGS.RedirectUrl.value().c_str(), uri);
             evhttp_add_header(evhttp_request_get_output_headers(req), "Location", loc.c_str());
             auto code = MYARGS.RedirectStatus.value_or(HTTP_MOVEPERM);
-            evhttp_send_reply(req, code, HttpReason(code).value_or(""), nullptr);
+            evhttp_send_reply(req, code, ghttp::HttpReason(code).value_or(""), nullptr);
             return;
         }
 
-        auto res = filters->cb(&qheaders, headers, std::string(data, dlen));
+        auto res = filters->cb(&g);
 
         auto evb = evbuffer_new();
         evbuffer_add_printf(evb, "%s", res.second.data());
@@ -389,13 +423,14 @@ void CHTTPServer::onBindCallback(evhttp_request* req, void* arg)
         if (MYARGS.IsAllowOrigin && MYARGS.IsAllowOrigin.value())
             evhttp_add_header(evhttp_request_get_output_headers(req), "access-control-allow-origin", "*");
 
-        evhttp_send_reply(req, res.first, HttpReason(res.first).value_or(""), evb);
+        evhttp_send_reply(req, res.first, ghttp::HttpReason(res.first).value_or(""), evb);
 
         if (evb)
             evbuffer_free(evb);
         return;
     }
-    evhttp_send_error(req, HTTP_INTERNAL, 0);
+err:
+    evhttp_send_error(req, errcode, 0);
 }
 
 bool CHTTPServer::Register(const std::string path, FilterData filter)
@@ -406,16 +441,22 @@ bool CHTTPServer::Register(const std::string path, FilterData filter)
     return true;
 }
 
+bool CHTTPServer::Register(const std::string path, const uint32_t cmd, HttpCallbackType cb)
+{
+    FilterData filter = { .cmd = cmd, .cb = cb, .self = this };
+    return Register(path, filter);
+}
+
 bool CHTTPServer::RegEvent(std::string ename, std::function<HttpEventType> cb)
 {
     m_ev_callbacks[ename] = std::move(cb);
     return true;
 }
 
-std::optional<std::pair<uint32_t, std::string>> CHTTPServer::EmitEvent(std::string ename, const RequestData& rd)
+std::optional<std::pair<uint32_t, std::string>> CHTTPServer::EmitEvent(std::string ename, ghttp::CGlobalData* g)
 {
     if (auto it = m_ev_callbacks.find(ename); it != std::end(m_ev_callbacks)) {
-        return (it->second)(rd);
+        return (it->second)(g);
     }
     return std::nullopt;
 }

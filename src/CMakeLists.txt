@@ -95,6 +95,7 @@ elseif(${CMAKE_SYSTEM_NAME} MATCHES Linux)
 	message("This is a Linux System")
 	add_definitions(-DPLATFORMOS="Linux")
 	add_definitions(-DLINUX_PLATFORMOS)
+    target_link_libraries(${PROJECT_NAME} PUBLIC stdc++fs)
 endif()
 
 # Disable in-source builds to prevent source tree corruption.

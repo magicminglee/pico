@@ -71,6 +71,8 @@ class CApp {
                                 MYARGS.RedirectUrl = j["redirecturl"].get<std::string>();
                             if (j.contains("apikey") && j["apikey"].is_string())
                                 MYARGS.ApiKey = j["apikey"].get<std::string>();
+                            if (j.contains("tokenexpire") && j["tokenexpire"].is_number_unsigned())
+                                MYARGS.TokenExpire = j["tokenexpire"].get<uint32_t>();
                         }
                         CINFO("CTX:%s reload config %s", MYARGS.CTXID.c_str(), j.dump().c_str());
                     } catch (const nlohmann::json::exception& e) {
@@ -81,10 +83,6 @@ class CApp {
 
             if (!CApp::Init()) {
                 CERROR("CTX:%s CApp::Init fail", MYARGS.CTXID.c_str());
-                return false;
-            }
-            if (!CMongo::Instance().GetOne()) {
-                CERROR("CTX:%s CMongo::GetOne fail", MYARGS.CTXID.c_str());
                 return false;
             }
             if (!CRedisMgr::Instance().Init()) {
