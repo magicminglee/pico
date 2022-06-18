@@ -3,11 +3,19 @@
 ## Install dependency libraries
 
 ```shell
-cmake -DCMAKE_BUILD_TYPE="Debug" -DCMAKE_PREFIX_PATH="/data/user00/pico" -H. -Bbuild
+cd external
+sh install.sh
 ```
 
-## Launch services
+## Build
 
 ```shell
+cmake -DCMAKE_BUILD_TYPE="Debug" -DCMAKE_PREFIX_PATH="/data/user00/pico/serverdev/src/external" -H. -Bbuild
+cd build && make -j4
+```
 
+## Launch
+
+```shell
+./bin/PICO -f ../config/config.yaml
 ```
