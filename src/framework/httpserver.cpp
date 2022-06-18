@@ -207,18 +207,18 @@ static const std::map<std::string, std::string> MIME = {
     { ".zip", "application/zip; charset=utf-8" }
 };
 
-static const std::map<const uint32_t, std::string> RESPSTR = {
-    { HTTP_OK, "OK" },
-    { HTTP_NOCONTENT, "NO CONTENT" },
-    { HTTP_MOVEPERM, "MOVED PERMANENTLY" },
-    { HTTP_MOVETEMP, "MOVED TEMPORARILY" },
-    { HTTP_NOTMODIFIED, "NOT MODIFIED" },
-    { HTTP_BADREQUEST, "INVALID REQUEST" },
-    { HTTP_NOTFOUND, "NOT FOUND" },
-    { HTTP_BADMETHOD, "METHOD NOT ALLOWED" },
-    { HTTP_INTERNAL, "INTERNAL ERROR" },
-    { HTTP_SERVUNAVAIL, "NOT AVAILABLE" },
-    { HTTP_UNAUTHORIZED, "UNAUTHORIZED" },
+static const std::map<ghttp::HttpStatusCode, std::string> RESPSTR = {
+    { ghttp::HttpStatusCode::OK, "OK" },
+    { ghttp::HttpStatusCode::NOCONTENT, "NO CONTENT" },
+    { ghttp::HttpStatusCode::MOVEPERM, "MOVED PERMANENTLY" },
+    { ghttp::HttpStatusCode::MOVETEMP, "MOVED TEMPORARILY" },
+    { ghttp::HttpStatusCode::NOTMODIFIED, "NOT MODIFIED" },
+    { ghttp::HttpStatusCode::BADREQUEST, "INVALID REQUEST" },
+    { ghttp::HttpStatusCode::NOTFOUND, "NOT FOUND" },
+    { ghttp::HttpStatusCode::BADMETHOD, "METHOD NOT ALLOWED" },
+    { ghttp::HttpStatusCode::INTERNAL, "INTERNAL ERROR" },
+    { ghttp::HttpStatusCode::SERVUNAVAIL, "NOT AVAILABLE" },
+    { ghttp::HttpStatusCode::UNAUTHORIZED, "UNAUTHORIZED" },
 };
 
 namespace ghttp {
@@ -259,7 +259,7 @@ std::optional<std::string_view> CGlobalData::GetRequestBody() const
     return data;
 }
 
-std::optional<const char*> HttpReason(const uint32_t code)
+std::optional<const char*> HttpReason(ghttp::HttpStatusCode code)
 {
     std::optional<const char*> reason;
     if (auto it = RESPSTR.find(code); it != std::end(RESPSTR))
@@ -311,29 +311,29 @@ static void onDefault(struct evhttp_request* req, void* arg)
     if (uri && !is_https && MYARGS.IsForceHttps && MYARGS.IsForceHttps.value() && MYARGS.RedirectUrl && !MYARGS.RedirectUrl.value().empty()) {
         auto loc = CStringTool::Format("%s%s", MYARGS.RedirectUrl.value().c_str(), uri);
         evhttp_add_header(evhttp_request_get_output_headers(req), "Location", loc.c_str());
-        auto code = MYARGS.RedirectStatus.value_or(HTTP_MOVEPERM);
+        auto code = MYARGS.RedirectStatus.value_or(ghttp::HttpStatusCode::MOVEPERM);
         evhttp_send_reply(req, code, ghttp::HttpReason(code).value_or(""), nullptr);
         return;
     }
 
     auto deuri = (evhttp_uri*)evhttp_request_get_evhttp_uri(req);
     if (!deuri) {
-        evhttp_send_error(req, HTTP_BADREQUEST, 0);
+        evhttp_send_error(req, ghttp::HttpStatusCode::BADREQUEST, 0);
         return;
     }
     auto pathuri = evhttp_uri_get_path(deuri);
     if (!pathuri) {
-        evhttp_send_error(req, HTTP_BADREQUEST, 0);
+        evhttp_send_error(req, ghttp::HttpStatusCode::BADREQUEST, 0);
         return;
     }
     fs::path f = MYARGS.WebRootDir.value_or(fs::current_path()) + pathuri;
     if (!fs::exists(f)) {
-        evhttp_send_error(req, HTTP_NOTFOUND, 0);
+        evhttp_send_error(req, ghttp::HttpStatusCode::NOTFOUND, 0);
         return;
     }
     auto it = MIME.find(f.extension());
     if (it == std::end(MIME)) {
-        evhttp_send_error(req, HTTP_NOTFOUND, 0);
+        evhttp_send_error(req, ghttp::HttpStatusCode::NOTFOUND, 0);
         return;
     }
     auto hfd = fopen(f.c_str(), "r");
@@ -345,10 +345,10 @@ static void onDefault(struct evhttp_request* req, void* arg)
             evhttp_add_header(evhttp_request_get_output_headers(req), "access-control-allow-origin", "*");
         auto evb = evhttp_request_get_output_buffer(req);
         evbuffer_add_file(evb, fd, 0, fs::file_size(f));
-        evhttp_send_reply(req, HTTP_OK, ghttp::HttpReason(HTTP_OK).value_or(""), evb);
+        evhttp_send_reply(req, ghttp::HttpStatusCode::OK, ghttp::HttpReason(ghttp::HttpStatusCode::OK).value_or(""), evb);
         return;
     }
-    evhttp_send_error(req, HTTP_BADREQUEST, 0);
+    evhttp_send_error(req, ghttp::HttpStatusCode::BADREQUEST, 0);
 }
 
 void CHTTPServer::onBindCallback(evhttp_request* req, void* arg)
@@ -357,32 +357,32 @@ void CHTTPServer::onBindCallback(evhttp_request* req, void* arg)
         return;
     }
 
-    int errcode = HTTP_BADREQUEST;
+    int errcode = ghttp::HttpStatusCode::BADREQUEST;
     auto filters = (FilterData*)arg;
     if (filters && filters->cb) {
         uint32_t cmd = evhttp_request_get_command(req);
         // filter
         if (0 == (filters->cmd & cmd)) {
-            errcode = HTTP_BADMETHOD;
+            errcode = ghttp::HttpStatusCode::BADMETHOD;
             goto err;
         }
         // decode headers
         auto headers = evhttp_request_get_input_headers(req);
         auto deuri = (evhttp_uri*)evhttp_request_get_evhttp_uri(req);
         if (!deuri) {
-            errcode = HTTP_BADREQUEST;
+            errcode = ghttp::HttpStatusCode::BADREQUEST;
             goto err;
         }
         auto path = evhttp_uri_get_path(deuri);
         if (!path) {
-            errcode = HTTP_BADREQUEST;
+            errcode = ghttp::HttpStatusCode::BADREQUEST;
             goto err;
         }
         // decode query string to headers
         evkeyvalq qheaders = { 0 };
         if (auto qstr = evhttp_uri_get_query(deuri); qstr) {
             if (evhttp_parse_query_str(qstr, &qheaders) < 0) {
-                errcode = HTTP_BADREQUEST;
+                errcode = ghttp::HttpStatusCode::BADREQUEST;
                 goto err;
             }
         }
@@ -409,7 +409,7 @@ void CHTTPServer::onBindCallback(evhttp_request* req, void* arg)
         if (uri && !is_https && MYARGS.IsForceHttps && MYARGS.IsForceHttps.value() && MYARGS.RedirectUrl && !MYARGS.RedirectUrl.value().empty()) {
             auto loc = CStringTool::Format("%s%s", MYARGS.RedirectUrl.value().c_str(), uri);
             evhttp_add_header(evhttp_request_get_output_headers(req), "Location", loc.c_str());
-            auto code = MYARGS.RedirectStatus.value_or(HTTP_MOVEPERM);
+            auto code = MYARGS.RedirectStatus.value_or(ghttp::HttpStatusCode::MOVEPERM);
             evhttp_send_reply(req, code, ghttp::HttpReason(code).value_or(""), nullptr);
             return;
         }
@@ -566,10 +566,10 @@ std::optional<std::string_view> CHTTPServer::GetTLSData(const std::string key)
 }
 
 ///////////////////////////////////////////////////////////////CHTTPCli/////////////////////////////////////////////////////////////////////////
-//thread_local struct evhttp_connection* CHTTPCli::m_evcon = nullptr;
+static thread_local struct evhttp_connection* tls_evconn = nullptr;
 bool CHTTPCli::Emit(std::string_view url,
     CallbackFuncType cb,
-    const uint32_t cmd,
+    ghttp::HttpMethod cmd,
     std::optional<std::string_view> data,
     std::map<std::string, std::string> headers)
 {
@@ -580,12 +580,6 @@ bool CHTTPCli::Emit(std::string_view url,
         return false;
     }
     return true;
-}
-
-void CHTTPCli::destroy(CHTTPCli* self)
-{
-    evhttp_connection_free(self->m_evcon);
-    CDEL(self);
 }
 
 void CHTTPCli::delegateCallback(struct evhttp_request* req, void* arg)
@@ -604,12 +598,17 @@ void CHTTPCli::delegateCallback(struct evhttp_request* req, void* arg)
         else
             result = { evhttp_request_get_response_code(req), std::nullopt };
     } else {
-        result = { HTTP_BADREQUEST, std::nullopt };
+        result = { ghttp::HttpStatusCode::BADREQUEST, std::nullopt };
     }
 
     if (self->m_callback)
         self->m_callback(&g, result.first, result.second);
-    CHTTPCli::destroy(self);
+    CDEL(self);
+}
+
+static void delegateCloseCallback(struct evhttp_connection* req, void* arg)
+{
+    tls_evconn = nullptr;
 }
 
 bool CHTTPCli::request(const char* url,
@@ -633,20 +632,20 @@ bool CHTTPCli::request(const char* url,
     // parse a valid uri from url
     http_uri = evhttp_uri_parse(url);
     if (!http_uri) {
-        CERROR("parse error %s", url);
-        goto error;
+        CERROR("evhttp_uri_parse %s", url);
+        goto ERRLABLE;
     }
 
     scheme = evhttp_uri_get_scheme(http_uri);
     if (!scheme || (strcasecmp(scheme, "https") != 0 && strcasecmp(scheme, "http") != 0)) {
-        CERROR("must http or https");
-        goto error;
+        CERROR("evhttp_uri_get_scheme");
+        goto ERRLABLE;
     }
 
     host = evhttp_uri_get_host(http_uri);
-    if (host == NULL) {
-        CERROR("url must have a host");
-        goto error;
+    if (!host) {
+        CERROR("evhttp_uri_get_host");
+        goto ERRLABLE;
     }
 
     port = evhttp_uri_get_port(http_uri);
@@ -670,8 +669,8 @@ bool CHTTPCli::request(const char* url,
     // construct a request
     req = evhttp_request_new(cb, this);
     if (!req) {
-        CERROR("evhttp_request_new() failed");
-        goto error;
+        CERROR("evhttp_request_new");
+        goto ERRLABLE;
     }
     output_headers = evhttp_request_get_output_headers(req);
     evhttp_add_header(output_headers, "Host", host);
@@ -692,8 +691,8 @@ bool CHTTPCli::request(const char* url,
     } else if (strcasecmp(scheme, "https") == 0) {
         ssl = CSSLContex::Instance().CreateOneSSL();
         if (!ssl) {
-            CERROR("SSL_new fail");
-            goto error;
+            CERROR("CreateOneSSL");
+            goto ERRLABLE;
         }
 
         SSL_ctrl(ssl, SSL_CTRL_SET_TLSEXT_HOSTNAME, TLSEXT_NAMETYPE_host_name, (void*)host);
@@ -704,33 +703,39 @@ bool CHTTPCli::request(const char* url,
     }
 
     if (!bev) {
-        CERROR("bufferevent_openssl_socket_new() failed");
-        goto error;
+        CERROR("Bvsocket");
+        goto ERRLABLE;
     }
 
-    m_evcon = CWorker::MAIN_CONTEX->CreateHttpConnection(bev, host, port);
-    if (!m_evcon) {
-        CDEBUG("evhttp_connection_base_bufferevent_new() failed");
-        goto error;
+    if (!tls_evconn) {
+        tls_evconn = CWorker::MAIN_CONTEX->CreateHttpConnection(bev, host, port);
+        if (!tls_evconn) {
+            CDEBUG("CreateHttpConnection");
+            goto ERRLABLE;
+        }
+        evhttp_connection_set_retries(tls_evconn, 3);
+        evhttp_connection_set_timeout(tls_evconn, 30);
+        evhttp_connection_set_closecb(tls_evconn, delegateCloseCallback, nullptr);
+        evhttp_connection_free_on_completion(tls_evconn);
     }
-    evhttp_connection_set_retries(m_evcon, 3);
-    evhttp_connection_set_timeout(m_evcon, 30);
 
     // make a http request
-    r = evhttp_make_request(m_evcon, req, (evhttp_cmd_type)method, uri);
+    r = evhttp_make_request(tls_evconn, req, (evhttp_cmd_type)method, uri);
     if (r != 0) {
-        CERROR("evhttp_make_request() failed");
-        goto error;
+        CERROR("evhttp_make_request");
+        goto ERRLABLE;
     }
-    goto cleanup;
+    goto CLEANUPLABLE;
 
-error:
+ERRLABLE:
     ret = false;
     if (req)
         evhttp_request_free(req);
-    if (m_evcon)
-        evhttp_connection_free(m_evcon);
-cleanup:
+    if (tls_evconn) {
+        evhttp_connection_free(tls_evconn);
+        tls_evconn = nullptr;
+    }
+CLEANUPLABLE:
     if (http_uri)
         evhttp_uri_free(http_uri);
     if (!is_https && ssl)

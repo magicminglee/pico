@@ -7,10 +7,35 @@
 
 NAMESPACE_FRAMEWORK_BEGIN
 
-#define HTTP_UNAUTHORIZED 401
-
 namespace ghttp {
-std::optional<const char*> HttpReason(const uint32_t code);
+enum class HttpStatusCode : uint32_t {
+    OK = 200, /**< request completed ok */
+    NOCONTENT = 204, /**< request does not have content */
+    MOVEPERM = 301, /**< the uri moved permanently */
+    MOVETEMP = 302, /**< the uri moved temporarily */
+    NOTMODIFIED = 304, /**< page was not modified from last */
+    BADREQUEST = 400, /**< invalid http request was made */
+    UNAUTHORIZED = 401,
+    NOTFOUND = 404, /**< could not find content for uri */
+    BADMETHOD = 405, /**< method not allowed for this uri */
+    ENTITYTOOLARGE = 413, /**<  */
+    EXPECTATIONFAILED = 417, /**< we can't handle this expectation */
+    INTERNAL = 500, /**< internal error */
+    NOTIMPLEMENTED = 501, /**< not implemented */
+    SERVUNAVAIL = 503, /**< the server is not available */
+};
+enum class HttpMethod : uint32_t {
+    GET = 1 << 0,
+    POST = 1 << 1,
+    HEAD = 1 << 2,
+    PUT = 1 << 3,
+    DELETE = 1 << 4,
+    OPTIONS = 1 << 5,
+    TRACE = 1 << 6,
+    CONNECT = 1 << 7,
+    PATCH = 1 << 8
+};
+std::optional<const char*> HttpReason(HttpStatusCode code);
 class CGlobalData {
 public:
     CGlobalData() = default;
@@ -31,8 +56,8 @@ public:
 }
 
 class CHTTPServer : public CObject {
-    typedef std::pair<uint32_t, std::string> HttpCallbackType(const ghttp::CGlobalData*);
-    typedef std::optional<std::pair<uint32_t, std::string>> HttpEventType(ghttp::CGlobalData*);
+    typedef std::pair<ghttp::HttpStatusCode, std::string> HttpCallbackType(const ghttp::CGlobalData*);
+    typedef std::optional<std::pair<ghttp::HttpStatusCode, std::string>> HttpEventType(ghttp::CGlobalData*);
 
 public:
     struct FilterData {
@@ -77,16 +102,13 @@ class CHTTPCli {
 public:
     static bool Emit(std::string_view url,
         CallbackFuncType cb,
-        const uint32_t cmd = EVHTTP_REQ_GET,
+        ghttp::HttpMethod cmd = ghttp::HttpMethod::GET,
         std::optional<std::string_view> data = std::nullopt,
         std::map<std::string, std::string> headers = {});
 
 private:
-    static void destroy(CHTTPCli* self);
     bool request(const char* url, const uint32_t cmd, std::optional<std::string_view> data, std::optional<std::map<std::string, std::string>> headers, HttpHandleCallbackFunc cb);
     static void delegateCallback(struct evhttp_request* req, void* arg);
-    // thread_local struct evhttp_connection* CHTTPCli::m_evcon;
-    struct evhttp_connection* m_evcon;
     CallbackFuncType m_callback = { nullptr };
 };
 NAMESPACE_FRAMEWORK_END

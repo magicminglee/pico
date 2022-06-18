@@ -49,7 +49,7 @@ void CApp::Register(std::shared_ptr<CHTTPServer> hs)
             }
             auto auth = g->GetHeaderByKey("Authorization");
             if (!auth)
-                return std::optional<std::pair<uint32_t, std::string>>({ HTTP_UNAUTHORIZED, "" });
+                return std::optional<std::pair<uint32_t, std::string>>({ ghttp::HttpStatusCode::UNAUTHORIZED, "" });
             try {
                 auto res = CStringTool::Split(auth.value(), " ");
                 if (2 == res.size()) {
@@ -70,14 +70,14 @@ void CApp::Register(std::shared_ptr<CHTTPServer> hs)
             } catch (const std::exception& e) {
                 CERROR("CTX:%s jwt verify exception %s", MYARGS.CTXID.c_str(), e.what());
             }
-            return std::optional<std::pair<uint32_t, std::string>>({ HTTP_UNAUTHORIZED, "" });
+            return std::optional<std::pair<uint32_t, std::string>>({ ghttp::HttpStatusCode::UNAUTHORIZED, "" });
         });
     hs->Register(
         "/game/v1/login",
-        EVHTTP_REQ_POST,
+        ghttp::HttpMethod::POST,
         [](const ghttp::CGlobalData* g) -> std::pair<uint32_t, std::string> {
             if (!g->GetRequestBody())
-                return { HTTP_BADREQUEST, "Invalid Parameters" };
+                return { ghttp::HttpStatusCode::BADREQUEST, "Invalid Parameters" };
             try {
                 auto j = nlohmann::json::parse(g->GetRequestBody().value());
 
@@ -96,7 +96,7 @@ void CApp::Register(std::shared_ptr<CHTTPServer> hs)
                     result = col.find_one_and_update(query.view(), update.view(), option);
                 } catch (const std::exception& e) {
                     CERROR("CTX:%s /game/v1/login mongo exception %s", MYARGS.CTXID.c_str(), e.what());
-                    return { HTTP_INTERNAL, "Databse Exception" };
+                    return { ghttp::HttpStatusCode::INTERNAL, "Databse Exception" };
                 }
 
                 std::optional<int64_t> uid;
@@ -129,7 +129,7 @@ void CApp::Register(std::shared_ptr<CHTTPServer> hs)
                                 }
                             } catch (const std::exception& e) {
                                 CERROR("CTX:%s /game/v1/login mongo exception %s", MYARGS.CTXID.c_str(), e.what());
-                                return { HTTP_INTERNAL, "Databse Exception" };
+                                return { ghttp::HttpStatusCode::INTERNAL, "Databse Exception" };
                             }
                         }
                     }
@@ -145,35 +145,35 @@ void CApp::Register(std::shared_ptr<CHTTPServer> hs)
                     nlohmann::json js;
                     js["token"] = token;
                     js["type"] = j["type"].get<std::string>();
-                    return { HTTP_OK, js.dump() };
+                    return { ghttp::HttpStatusCode::OK, js.dump() };
                 }
             } catch (const std::exception& e) {
                 CERROR("CTX:%s /game/v1/login exception %s", MYARGS.CTXID.c_str(), e.what());
             }
-            return { HTTP_BADREQUEST, "Invalid Parameters" };
+            return { ghttp::HttpStatusCode::BADREQUEST, "Invalid Parameters" };
         });
     hs->Register(
         "/game/v1/getuser",
-        EVHTTP_REQ_GET | EVHTTP_REQ_POST,
+        EVHTTP::REQ_GET | EVHTTP::REQ_POST,
         [hs](const ghttp::CGlobalData* g) -> std::pair<uint32_t, std::string> {
             if (!g->GetUid())
-                return { HTTP_BADREQUEST, "Invalid Parameters" };
+                return { ghttp::HttpStatusCode::BADREQUEST, "Invalid Parameters" };
 
-            // CHTTPCli::Emit("https://dev.wgnice.com:9021/game/v1/setuser",
-            //     [](const ghttp::CGlobalData* g, const int32_t status, std::optional<std::string_view> data) {
-            //         CINFO("CTX:%s https://badssl.com/ headers %s", MYARGS.CTXID.c_str(), g->GetHeaderByKey("connection").value_or("").data());
-            //         if (data) {
-            //             auto body = std::string(data.value().data(), data.value().length());
-            //             CINFO("CTX:%s https://badssl.com/ response %s", MYARGS.CTXID.c_str(), body.c_str());
-            //         }
-            //     },
-            //     EVHTTP_REQ_POST,
-            //     "{\"value\":\"{bar}\"}",
-            //     { { "Authorization", "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXUyJ9.eyJleHAiOjE2NTU0NjUyOTAsInR5cGUiOiJhbm9ueW1vdXMiLCJ1aWQiOjJ9.Hn9RRPTmOjKfSsZL-d54inicG7UbniaWWWG-nJADwpg" } });
+            CHTTPCli::Emit("https://dev.wgnice.com:9021/game/v1/setuser",
+                [](const ghttp::CGlobalData* g, const int32_t status, std::optional<std::string_view> data) {
+                    CINFO("CTX:%s https://badssl.com/ headers %s", MYARGS.CTXID.c_str(), g->GetHeaderByKey("connection").value_or("").data());
+                    if (data) {
+                        auto body = std::string(data.value().data(), data.value().length());
+                        CINFO("CTX:%s https://badssl.com/ response %s", MYARGS.CTXID.c_str(), body.c_str());
+                    }
+                },
+                EVghttp::HttpStatusCode::REQ_POST,
+                "{\"value\":\"{bar}\"}",
+                { { "Authorization", "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXUyJ9.eyJleHAiOjE2NTU2MjYxMDMsInR5cGUiOiJhbm9ueW1vdXMiLCJ1aWQiOjJ9.F5e53bdvKGZ2SVwSQuiCJu1HHRGbrGi-4EeOQoZJlho" } });
 
             auto v = hs->GetTLSData(std::to_string(g->GetUid().value()));
             if (v) {
-                return { HTTP_OK, v.value().data() };
+                return { ghttp::HttpStatusCode::OK, v.value().data() };
             }
             try {
                 auto conn = CMongo::Instance().Conn();
@@ -189,18 +189,18 @@ void CApp::Register(std::shared_ptr<CHTTPServer> hs)
                     }
                 }
                 hs->SetTLSData(std::to_string(g->GetUid().value()), j.dump());
-                return { HTTP_OK, j.dump() };
+                return { ghttp::HttpStatusCode::OK, j.dump() };
             } catch (const std::exception& e) {
                 CERROR("CTX:%s /game/v1/getuser mongo exception %s", MYARGS.CTXID.c_str(), e.what());
-                return { HTTP_INTERNAL, "Database Exception" };
+                return { ghttp::HttpStatusCode::INTERNAL, "Database Exception" };
             }
         });
     hs->Register(
         "/game/v1/setuser",
-        EVHTTP_REQ_POST,
+        ghttp::HttpMethod::POST,
         [hs](const ghttp::CGlobalData* g) -> std::pair<uint32_t, std::string> {
             if (!g->GetRequestBody() || !g->GetUid())
-                return { HTTP_BADREQUEST, "Invalid Parameters" };
+                return { ghttp::HttpStatusCode::BADREQUEST, "Invalid Parameters" };
             try {
                 auto j = nlohmann::json::parse(g->GetRequestBody().value());
                 auto conn = CMongo::Instance().Conn();
@@ -211,12 +211,12 @@ void CApp::Register(std::shared_ptr<CHTTPServer> hs)
                 col.update_one(query.view(), update.view());
             } catch (const std::exception& e) {
                 CERROR("CTX:%s /game/v1/setuser mongo exception %s", MYARGS.CTXID.c_str(), e.what());
-                return { HTTP_INTERNAL, "Database Exception" };
+                return { ghttp::HttpStatusCode::INTERNAL, "Database Exception" };
             }
 
             // CRedisMgr::Instance().Handle(0)->del(std::to_string(g->GetUid().value()));
             hs->DelTLSData(std::to_string(g->GetUid().value()));
             nlohmann::json js;
-            return { HTTP_OK, js.dump() };
+            return { ghttp::HttpStatusCode::OK, js.dump() };
         });
 }
