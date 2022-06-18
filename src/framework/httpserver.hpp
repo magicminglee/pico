@@ -8,21 +8,23 @@
 NAMESPACE_FRAMEWORK_BEGIN
 
 namespace ghttp {
-enum class HttpStatusCode : uint32_t {
-    OK = 200, /**< request completed ok */
-    NOCONTENT = 204, /**< request does not have content */
-    MOVEPERM = 301, /**< the uri moved permanently */
-    MOVETEMP = 302, /**< the uri moved temporarily */
-    NOTMODIFIED = 304, /**< page was not modified from last */
-    BADREQUEST = 400, /**< invalid http request was made */
-    UNAUTHORIZED = 401,
-    NOTFOUND = 404, /**< could not find content for uri */
-    BADMETHOD = 405, /**< method not allowed for this uri */
-    ENTITYTOOLARGE = 413, /**<  */
-    EXPECTATIONFAILED = 417, /**< we can't handle this expectation */
-    INTERNAL = 500, /**< internal error */
-    NOTIMPLEMENTED = 501, /**< not implemented */
-    SERVUNAVAIL = 503, /**< the server is not available */
+enum class HttpStatusCode : int32_t {
+    OK = 200, // request completed ok
+    NOCONTENT = 204, // request does not have content
+    MOVEPERM = 301, // the uri moved permanently
+    MOVETEMP = 302, // the uri moved temporarily
+    NOTMODIFIED = 304, // page was not modified from last
+    BADREQUEST = 400, // invalid http request was made
+    UNAUTHORIZED = 401, // Unauthorized
+    FORBIDDEN = 403, // Forbidden
+    NOTFOUND = 404, // could not find content for uri
+    BADMETHOD = 405, // method not allowed for this uri
+    ENTITYTOOLARGE = 413, // Payload Too Large
+    EXPECTATIONFAILED = 417, // we can't handle this expectation
+    INTERNAL = 500, // internal error
+    NOTIMPLEMENTED = 501, // not implemented
+    BADGATEWAY = 502, // Bad Gateway
+    SERVUNAVAIL = 503, // the server is not available
 };
 enum class HttpMethod : uint32_t {
     GET = 1 << 0,
@@ -61,7 +63,7 @@ class CHTTPServer : public CObject {
 
 public:
     struct FilterData {
-        uint32_t cmd;
+        ghttp::HttpMethod cmd;
         std::function<HttpCallbackType> cb;
         std::unordered_map<std::string, std::string> h;
         CHTTPServer* self;
@@ -72,10 +74,10 @@ public:
     CHTTPServer(CHTTPServer&&);
     ~CHTTPServer();
     bool Init(std::string host);
-    bool Register(const std::string path, const uint32_t cmd, std::function<HttpCallbackType> cb);
+    bool Register(const std::string path, ghttp::HttpMethod cmd, std::function<HttpCallbackType> cb);
     bool Register(const std::string path, FilterData rd);
     bool RegEvent(std::string ename, std::function<HttpEventType> cb);
-    std::optional<std::pair<uint32_t, std::string>> EmitEvent(std::string ename, ghttp::CGlobalData* g);
+    std::optional<std::pair<ghttp::HttpStatusCode, std::string>> EmitEvent(std::string ename, ghttp::CGlobalData* g);
     void SetTLSData(const std::string key, std::string&& val);
     void DelTLSData(const std::string key);
     std::optional<std::string_view> GetTLSData(const std::string key);
@@ -92,12 +94,11 @@ private:
     std::unordered_map<std::string, FilterData> m_callbacks;
     std::unordered_map<std::string, std::function<HttpEventType>> m_ev_callbacks;
     std::unordered_map<std::string, std::string> m_tlsdata;
-    // DISABLE_CLASS_COPYABLE(CHTTPServer);
 };
 
 class CHTTPCli {
     typedef void (*HttpHandleCallbackFunc)(struct evhttp_request* req, void* arg);
-    using CallbackFuncType = std::function<void(const ghttp::CGlobalData*, const int32_t, std::optional<std::string_view>)>;
+    using CallbackFuncType = std::function<void(const ghttp::CGlobalData*, ghttp::HttpStatusCode, std::optional<std::string_view>)>;
 
 public:
     static bool Emit(std::string_view url,

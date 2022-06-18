@@ -214,10 +214,15 @@ static const std::map<ghttp::HttpStatusCode, std::string> RESPSTR = {
     { ghttp::HttpStatusCode::MOVETEMP, "MOVED TEMPORARILY" },
     { ghttp::HttpStatusCode::NOTMODIFIED, "NOT MODIFIED" },
     { ghttp::HttpStatusCode::BADREQUEST, "INVALID REQUEST" },
+    { ghttp::HttpStatusCode::UNAUTHORIZED, "UNAUTHORIZED" },
+    { ghttp::HttpStatusCode::FORBIDDEN, "FORBIDDEN" },
     { ghttp::HttpStatusCode::NOTFOUND, "NOT FOUND" },
     { ghttp::HttpStatusCode::BADMETHOD, "METHOD NOT ALLOWED" },
+    { ghttp::HttpStatusCode::ENTITYTOOLARGE, "ENTITYTOOLARGE" },
+    { ghttp::HttpStatusCode::EXPECTATIONFAILED, "EXPECTATIONFAILED" },
     { ghttp::HttpStatusCode::INTERNAL, "INTERNAL ERROR" },
     { ghttp::HttpStatusCode::SERVUNAVAIL, "NOT AVAILABLE" },
+    { ghttp::HttpStatusCode::BADGATEWAY, "BADGATEWAY" },
     { ghttp::HttpStatusCode::UNAUTHORIZED, "UNAUTHORIZED" },
 };
 
@@ -311,29 +316,29 @@ static void onDefault(struct evhttp_request* req, void* arg)
     if (uri && !is_https && MYARGS.IsForceHttps && MYARGS.IsForceHttps.value() && MYARGS.RedirectUrl && !MYARGS.RedirectUrl.value().empty()) {
         auto loc = CStringTool::Format("%s%s", MYARGS.RedirectUrl.value().c_str(), uri);
         evhttp_add_header(evhttp_request_get_output_headers(req), "Location", loc.c_str());
-        auto code = MYARGS.RedirectStatus.value_or(ghttp::HttpStatusCode::MOVEPERM);
-        evhttp_send_reply(req, code, ghttp::HttpReason(code).value_or(""), nullptr);
+        auto code = MYARGS.RedirectStatus.value_or((uint16_t)ghttp::HttpStatusCode::MOVEPERM);
+        evhttp_send_reply(req, code, ghttp::HttpReason(ghttp::HttpStatusCode(code)).value_or(""), nullptr);
         return;
     }
 
     auto deuri = (evhttp_uri*)evhttp_request_get_evhttp_uri(req);
     if (!deuri) {
-        evhttp_send_error(req, ghttp::HttpStatusCode::BADREQUEST, 0);
+        evhttp_send_error(req, (int32_t)(ghttp::HttpStatusCode::BADREQUEST), 0);
         return;
     }
     auto pathuri = evhttp_uri_get_path(deuri);
     if (!pathuri) {
-        evhttp_send_error(req, ghttp::HttpStatusCode::BADREQUEST, 0);
+        evhttp_send_error(req, (int32_t)(ghttp::HttpStatusCode::BADREQUEST), 0);
         return;
     }
     fs::path f = MYARGS.WebRootDir.value_or(fs::current_path()) + pathuri;
     if (!fs::exists(f)) {
-        evhttp_send_error(req, ghttp::HttpStatusCode::NOTFOUND, 0);
+        evhttp_send_error(req, (int32_t)(ghttp::HttpStatusCode::NOTFOUND), 0);
         return;
     }
     auto it = MIME.find(f.extension());
     if (it == std::end(MIME)) {
-        evhttp_send_error(req, ghttp::HttpStatusCode::NOTFOUND, 0);
+        evhttp_send_error(req, (int32_t)(ghttp::HttpStatusCode::NOTFOUND), 0);
         return;
     }
     auto hfd = fopen(f.c_str(), "r");
@@ -345,10 +350,10 @@ static void onDefault(struct evhttp_request* req, void* arg)
             evhttp_add_header(evhttp_request_get_output_headers(req), "access-control-allow-origin", "*");
         auto evb = evhttp_request_get_output_buffer(req);
         evbuffer_add_file(evb, fd, 0, fs::file_size(f));
-        evhttp_send_reply(req, ghttp::HttpStatusCode::OK, ghttp::HttpReason(ghttp::HttpStatusCode::OK).value_or(""), evb);
+        evhttp_send_reply(req, (int32_t)(ghttp::HttpStatusCode::OK), ghttp::HttpReason(ghttp::HttpStatusCode::OK).value_or(""), evb);
         return;
     }
-    evhttp_send_error(req, ghttp::HttpStatusCode::BADREQUEST, 0);
+    evhttp_send_error(req, (int32_t)(ghttp::HttpStatusCode::BADREQUEST), 0);
 }
 
 void CHTTPServer::onBindCallback(evhttp_request* req, void* arg)
@@ -357,12 +362,12 @@ void CHTTPServer::onBindCallback(evhttp_request* req, void* arg)
         return;
     }
 
-    int errcode = ghttp::HttpStatusCode::BADREQUEST;
+    auto errcode = ghttp::HttpStatusCode::BADREQUEST;
     auto filters = (FilterData*)arg;
     if (filters && filters->cb) {
         uint32_t cmd = evhttp_request_get_command(req);
         // filter
-        if (0 == (filters->cmd & cmd)) {
+        if (0 == ((uint32_t)(filters->cmd) & cmd)) {
             errcode = ghttp::HttpStatusCode::BADMETHOD;
             goto err;
         }
@@ -394,7 +399,7 @@ void CHTTPServer::onBindCallback(evhttp_request* req, void* arg)
         ghttp::CGlobalData g = { .qheaders = headers, .headers = headers, .path = std::string_view(path), .data = std::string_view(data, dlen) };
         auto r = filters->self->EmitEvent("start", &g);
         if (r) {
-            evhttp_send_reply(req, r.value().first, ghttp::HttpReason(r.value().first).value_or(""), nullptr);
+            evhttp_send_reply(req, (int32_t)r.value().first, ghttp::HttpReason(r.value().first).value_or(""), nullptr);
             return;
         }
         // decode http or https
@@ -409,8 +414,8 @@ void CHTTPServer::onBindCallback(evhttp_request* req, void* arg)
         if (uri && !is_https && MYARGS.IsForceHttps && MYARGS.IsForceHttps.value() && MYARGS.RedirectUrl && !MYARGS.RedirectUrl.value().empty()) {
             auto loc = CStringTool::Format("%s%s", MYARGS.RedirectUrl.value().c_str(), uri);
             evhttp_add_header(evhttp_request_get_output_headers(req), "Location", loc.c_str());
-            auto code = MYARGS.RedirectStatus.value_or(ghttp::HttpStatusCode::MOVEPERM);
-            evhttp_send_reply(req, code, ghttp::HttpReason(code).value_or(""), nullptr);
+            auto code = MYARGS.RedirectStatus.value_or((uint16_t)ghttp::HttpStatusCode::MOVEPERM);
+            evhttp_send_reply(req, code, ghttp::HttpReason(ghttp::HttpStatusCode(code)).value_or(""), nullptr);
             return;
         }
 
@@ -424,14 +429,14 @@ void CHTTPServer::onBindCallback(evhttp_request* req, void* arg)
         if (MYARGS.IsAllowOrigin && MYARGS.IsAllowOrigin.value())
             evhttp_add_header(evhttp_request_get_output_headers(req), "access-control-allow-origin", "*");
 
-        evhttp_send_reply(req, res.first, ghttp::HttpReason(res.first).value_or(""), evb);
+        evhttp_send_reply(req, (int32_t)res.first, ghttp::HttpReason(res.first).value_or(""), evb);
 
         if (evb)
             evbuffer_free(evb);
         return;
     }
 err:
-    evhttp_send_error(req, errcode, 0);
+    evhttp_send_error(req, (int32_t)errcode, 0);
 }
 
 bool CHTTPServer::Register(const std::string path, FilterData filter)
@@ -442,7 +447,7 @@ bool CHTTPServer::Register(const std::string path, FilterData filter)
     return true;
 }
 
-bool CHTTPServer::Register(const std::string path, const uint32_t cmd, std::function<HttpCallbackType> cb)
+bool CHTTPServer::Register(const std::string path, ghttp::HttpMethod cmd, std::function<HttpCallbackType> cb)
 {
     FilterData filter = { .cmd = cmd, .cb = cb, .self = this };
     return Register(path, filter);
@@ -454,7 +459,7 @@ bool CHTTPServer::RegEvent(std::string ename, std::function<HttpEventType> cb)
     return true;
 }
 
-std::optional<std::pair<uint32_t, std::string>> CHTTPServer::EmitEvent(std::string ename, ghttp::CGlobalData* g)
+std::optional<std::pair<ghttp::HttpStatusCode, std::string>> CHTTPServer::EmitEvent(std::string ename, ghttp::CGlobalData* g)
 {
     if (auto it = m_ev_callbacks.find(ename); it != std::end(m_ev_callbacks)) {
         return (it->second)(g);
@@ -575,7 +580,7 @@ bool CHTTPCli::Emit(std::string_view url,
 {
     CHTTPCli* self = CNEW CHTTPCli();
     self->m_callback = cb;
-    if (!self->request(url.data(), cmd, std::move(data), headers, CHTTPCli::delegateCallback)) {
+    if (!self->request(url.data(), (uint32_t)cmd, std::move(data), headers, CHTTPCli::delegateCallback)) {
         CDEL(self);
         return false;
     }
@@ -584,7 +589,7 @@ bool CHTTPCli::Emit(std::string_view url,
 
 void CHTTPCli::delegateCallback(struct evhttp_request* req, void* arg)
 {
-    std::pair<int32_t, std::optional<std::string_view>> result;
+    std::pair<ghttp::HttpStatusCode, std::optional<std::string_view>> result;
     CHTTPCli* self = (CHTTPCli*)arg;
     ghttp::CGlobalData g;
     if (req) {
@@ -594,9 +599,9 @@ void CHTTPCli::delegateCallback(struct evhttp_request* req, void* arg)
 
         g.headers = evhttp_request_get_input_headers(req);
         if (data)
-            result = { evhttp_request_get_response_code(req), std::string_view(data, dlen) };
+            result = { ghttp::HttpStatusCode(evhttp_request_get_response_code(req)), std::string_view(data, dlen) };
         else
-            result = { evhttp_request_get_response_code(req), std::nullopt };
+            result = { ghttp::HttpStatusCode(evhttp_request_get_response_code(req)), std::nullopt };
     } else {
         result = { ghttp::HttpStatusCode::BADREQUEST, std::nullopt };
     }
