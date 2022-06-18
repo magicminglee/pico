@@ -35,6 +35,7 @@ public:
     std::vector<std::string> RouteConf;
     std::optional<uint32_t> Interval;
     std::vector<std::string> RedisUrl;
+    std::optional<uint64_t> RedisTTL;
     std::optional<std::string> MongoUrl;
     std::vector<std::string> DbName;
     std::vector<std::vector<std::string>> DbColl;

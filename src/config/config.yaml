@@ -34,10 +34,12 @@ main:
   #maxframesize: 65536
   #Redis connect url
   redisurl: ["tcp://Ch1904@poker.demo.mongodb:5002/4"]
+  #Redis key expire seconds(default 5 minutes)
+  redisttl: 3600
   #Mongodb connect url
   mongourl: "mongodb://GAME:game12345@poker.demo.mongodb:5100,poker.demo.mongodb:5101,poker.demo.mongodb:5102/?authSource=admin&replicaSet=poker_demo"
   dbconf: [{ "dbname": "global_999", "collection": ["users", "uniqueid"] }]
   #Worker listenning host
   hosts: ["http://*:9020", "https://*:9021"]
   #Worker number(default 1)
-  workers: 2
+  workers: 4

@@ -1,23 +1,7 @@
 #include "ssl.hpp"
-#include "stringtool.hpp"
 #include "xlog.hpp"
 
 NAMESPACE_FRAMEWORK_BEGIN
-
-void CSSLContex::IncsQueueCnt()
-{
-    ++m_in_queue_count;
-}
-
-void CSSLContex::DescQueueCnt()
-{
-    --m_in_queue_count;
-}
-
-bool CSSLContex::IsQueueOver()
-{
-    return m_in_queue_count > m_max_queue_count;
-}
 
 SSL_CTX* CSSLContex::Ctx()
 {
@@ -54,9 +38,8 @@ SSL* CSSLContex::CreateOneSSL()
     return (SSL*)SSL_new(m_ssl_ctx);
 }
 
-bool CSSLContex::Init(const int64_t max_queue_count)
+bool CSSLContex::Init()
 {
-    m_max_queue_count = max_queue_count;
     if (!m_ssl_ctx) {
         SSL_library_init();
         ERR_load_crypto_strings();

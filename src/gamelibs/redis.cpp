@@ -28,7 +28,7 @@ namespace redis {
         m_async_handlemgr.clear();
         for (auto&& v : MYARGS.RedisUrl) {
             m_handlemgr.push_back(sw::redis::Redis(v));
-            addAsyncOne(v);
+            //addAsyncOne(v);
         }
         return true;
     }

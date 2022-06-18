@@ -110,6 +110,11 @@ bool CArgument::ParseYaml()
             }
         }
     }
+    if (config["main"] && config["main"].IsMap() && config["main"]["redisttl"]) {
+        RedisTTL = config["main"]["redisttl"].as<std::uint64_t>();
+    } else {
+        RedisTTL = 300;
+    }
     if (config["main"] && config["main"].IsMap() && config["main"]["mongourl"]) {
         MongoUrl = config["main"]["mongourl"].as<std::string>();
     }
@@ -169,6 +174,8 @@ bool CArgument::ParseYaml()
         j["apikey"] = ApiKey.value();
     if (TokenExpire)
         j["tokenexpire"] = TokenExpire.value();
+    if (RedisTTL)
+        j["redisttl"] = RedisTTL.value();
     auto a = nlohmann::json::array();
     for (auto&& v : Workers) {
         std::vector<std::string> hosts;

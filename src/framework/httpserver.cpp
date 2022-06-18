@@ -233,7 +233,7 @@ std::optional<int64_t> CGlobalData::GetUid() const
     return uid;
 }
 
-std::optional<std::string> CGlobalData::GetQueryByKey(const char* key) const
+std::optional<std::string_view> CGlobalData::GetQueryByKey(const char* key) const
 {
     if (!key || !qheaders)
         return std::nullopt;
@@ -241,7 +241,7 @@ std::optional<std::string> CGlobalData::GetQueryByKey(const char* key) const
     return val ? std::optional(val) : std::nullopt;
 }
 
-std::optional<std::string> CGlobalData::GetHeaderByKey(const char* key) const
+std::optional<std::string_view> CGlobalData::GetHeaderByKey(const char* key) const
 {
     if (!key || !headers)
         return std::nullopt;
@@ -249,12 +249,12 @@ std::optional<std::string> CGlobalData::GetHeaderByKey(const char* key) const
     return val ? std::optional(val) : std::nullopt;
 }
 
-std::optional<std::string> CGlobalData::GetRequestPath() const
+std::optional<std::string_view> CGlobalData::GetRequestPath() const
 {
     return path;
 }
 
-std::optional<std::string> CGlobalData::GetRequestBody() const
+std::optional<std::string_view> CGlobalData::GetRequestBody() const
 {
     return data;
 }
@@ -290,6 +290,7 @@ void CHTTPServer::destroy()
 struct bufferevent* CHTTPServer::onConnected(struct event_base* base, void* arg)
 {
     bool* ishttps = (bool*)arg;
+    CINFO("onConnected");
     return CWorker::MAIN_CONTEX->Bvsocket(-1, nullptr, nullptr, nullptr, nullptr, *ishttps ? CSSLContex::Instance().CreateOneSSL() : nullptr, true);
 }
 
@@ -390,7 +391,7 @@ void CHTTPServer::onBindCallback(evhttp_request* req, void* arg)
         char* data = (char*)evbuffer_pullup(buf, -1);
         int32_t dlen = evbuffer_get_length(buf);
 
-        ghttp::CGlobalData g = { .qheaders = headers, .headers = headers, .path = std::string(path), .data = std::string(data, dlen) };
+        ghttp::CGlobalData g = { .qheaders = headers, .headers = headers, .path = std::string_view(path), .data = std::string_view(data, dlen) };
         auto r = filters->self->EmitEvent("start", &g);
         if (r) {
             evhttp_send_reply(req, r.value().first, ghttp::HttpReason(r.value().first).value_or(""), nullptr);
@@ -413,10 +414,10 @@ void CHTTPServer::onBindCallback(evhttp_request* req, void* arg)
             return;
         }
 
-        auto res = filters->cb(&g);
+        auto&& res = filters->cb(&g);
 
         auto evb = evbuffer_new();
-        evbuffer_add_printf(evb, "%s", res.second.data());
+        evbuffer_add(evb, res.second.data(), res.second.length());
         for (auto& [k, v] : filters->h) {
             evhttp_add_header(evhttp_request_get_output_headers(req), k.c_str(), v.c_str());
         }
@@ -441,7 +442,7 @@ bool CHTTPServer::Register(const std::string path, FilterData filter)
     return true;
 }
 
-bool CHTTPServer::Register(const std::string path, const uint32_t cmd, HttpCallbackType cb)
+bool CHTTPServer::Register(const std::string path, const uint32_t cmd, std::function<HttpCallbackType> cb)
 {
     FilterData filter = { .cmd = cmd, .cb = cb, .self = this };
     return Register(path, filter);
@@ -545,4 +546,196 @@ bool CHTTPServer::setOption(const int32_t fd)
     return true;
 }
 
+void CHTTPServer::SetTLSData(const std::string key, std::string&& val)
+{
+    m_tlsdata[key] = val;
+}
+
+void CHTTPServer::DelTLSData(const std::string key)
+{
+    if (auto it = m_tlsdata.find(key); it != std::end(m_tlsdata))
+        m_tlsdata.erase(it);
+}
+
+std::optional<std::string_view> CHTTPServer::GetTLSData(const std::string key)
+{
+    if (auto it = m_tlsdata.find(key); it != std::end(m_tlsdata)) {
+        return it->second;
+    }
+    return std::nullopt;
+}
+
+///////////////////////////////////////////////////////////////CHTTPCli/////////////////////////////////////////////////////////////////////////
+//thread_local struct evhttp_connection* CHTTPCli::m_evcon = nullptr;
+bool CHTTPCli::Emit(std::string_view url,
+    CallbackFuncType cb,
+    const uint32_t cmd,
+    std::optional<std::string_view> data,
+    std::map<std::string, std::string> headers)
+{
+    CHTTPCli* self = CNEW CHTTPCli();
+    self->m_callback = cb;
+    if (!self->request(url.data(), cmd, std::move(data), headers, CHTTPCli::delegateCallback)) {
+        CDEL(self);
+        return false;
+    }
+    return true;
+}
+
+void CHTTPCli::destroy(CHTTPCli* self)
+{
+    evhttp_connection_free(self->m_evcon);
+    CDEL(self);
+}
+
+void CHTTPCli::delegateCallback(struct evhttp_request* req, void* arg)
+{
+    std::pair<int32_t, std::optional<std::string_view>> result;
+    CHTTPCli* self = (CHTTPCli*)arg;
+    ghttp::CGlobalData g;
+    if (req) {
+        struct evbuffer* buf = evhttp_request_get_input_buffer(req);
+        char* data = (char*)evbuffer_pullup(buf, -1);
+        auto dlen = evbuffer_get_length(buf);
+
+        g.headers = evhttp_request_get_input_headers(req);
+        if (data)
+            result = { evhttp_request_get_response_code(req), std::string_view(data, dlen) };
+        else
+            result = { evhttp_request_get_response_code(req), std::nullopt };
+    } else {
+        result = { HTTP_BADREQUEST, std::nullopt };
+    }
+
+    if (self->m_callback)
+        self->m_callback(&g, result.first, result.second);
+    CHTTPCli::destroy(self);
+}
+
+bool CHTTPCli::request(const char* url,
+    const uint32_t method,
+    std::optional<std::string_view> body,
+    std::optional<std::map<std::string, std::string>> headers,
+    HttpHandleCallbackFunc cb)
+{
+    bool ret = true;
+    const char *scheme = nullptr, *host = nullptr, *path = nullptr, *query = nullptr;
+    char uri[2048];
+    int port = -1, r = -1;
+    bool is_https = false;
+    SSL* ssl = nullptr;
+    struct evkeyvalq* output_headers = nullptr;
+    size_t uri_len = 0;
+    struct evhttp_uri* http_uri = nullptr;
+    struct evhttp_request* req = nullptr;
+    struct bufferevent* bev = nullptr;
+
+    // parse a valid uri from url
+    http_uri = evhttp_uri_parse(url);
+    if (!http_uri) {
+        CERROR("parse error %s", url);
+        goto error;
+    }
+
+    scheme = evhttp_uri_get_scheme(http_uri);
+    if (!scheme || (strcasecmp(scheme, "https") != 0 && strcasecmp(scheme, "http") != 0)) {
+        CERROR("must http or https");
+        goto error;
+    }
+
+    host = evhttp_uri_get_host(http_uri);
+    if (host == NULL) {
+        CERROR("url must have a host");
+        goto error;
+    }
+
+    port = evhttp_uri_get_port(http_uri);
+    if (port == -1) {
+        port = (strcasecmp(scheme, "http") == 0) ? 80 : 443;
+    }
+
+    path = evhttp_uri_get_path(http_uri);
+    if (strlen(path) == 0) {
+        path = "/";
+    }
+
+    query = evhttp_uri_get_query(http_uri);
+    if (query == NULL) {
+        snprintf(uri, sizeof(uri) - 1, "%s", path);
+    } else {
+        snprintf(uri, sizeof(uri) - 1, "%s?%s", path, query);
+    }
+    uri[sizeof(uri) - 1] = '\0';
+
+    // construct a request
+    req = evhttp_request_new(cb, this);
+    if (!req) {
+        CERROR("evhttp_request_new() failed");
+        goto error;
+    }
+    output_headers = evhttp_request_get_output_headers(req);
+    evhttp_add_header(output_headers, "Host", host);
+    evhttp_add_header(output_headers, "Connection", "keep-alive");
+    if (headers) {
+        for_each(headers.value().begin(),
+            headers.value().end(),
+            [output_headers](const std::pair<std::string, std::string> val) { evhttp_add_header(output_headers, val.first.c_str(), val.second.c_str()); });
+    }
+    if (body) {
+        struct evbuffer* evout = evhttp_request_get_output_buffer(req);
+        evbuffer_add(evout, body.value().data(), body.value().size());
+    }
+
+    // create a connection by scheme
+    if (strcasecmp(scheme, "http") == 0) {
+        bev = CWorker::MAIN_CONTEX->Bvsocket(-1, nullptr, nullptr, nullptr, this, nullptr, false);
+    } else if (strcasecmp(scheme, "https") == 0) {
+        ssl = CSSLContex::Instance().CreateOneSSL();
+        if (!ssl) {
+            CERROR("SSL_new fail");
+            goto error;
+        }
+
+        SSL_ctrl(ssl, SSL_CTRL_SET_TLSEXT_HOSTNAME, TLSEXT_NAMETYPE_host_name, (void*)host);
+
+        bev = CWorker::MAIN_CONTEX->Bvsocket(-1, nullptr, nullptr, nullptr, this, ssl, false);
+        bufferevent_openssl_set_allow_dirty_shutdown(bev, 1);
+        is_https = true;
+    }
+
+    if (!bev) {
+        CERROR("bufferevent_openssl_socket_new() failed");
+        goto error;
+    }
+
+    m_evcon = CWorker::MAIN_CONTEX->CreateHttpConnection(bev, host, port);
+    if (!m_evcon) {
+        CDEBUG("evhttp_connection_base_bufferevent_new() failed");
+        goto error;
+    }
+    evhttp_connection_set_retries(m_evcon, 3);
+    evhttp_connection_set_timeout(m_evcon, 30);
+
+    // make a http request
+    r = evhttp_make_request(m_evcon, req, (evhttp_cmd_type)method, uri);
+    if (r != 0) {
+        CERROR("evhttp_make_request() failed");
+        goto error;
+    }
+    goto cleanup;
+
+error:
+    ret = false;
+    if (req)
+        evhttp_request_free(req);
+    if (m_evcon)
+        evhttp_connection_free(m_evcon);
+cleanup:
+    if (http_uri)
+        evhttp_uri_free(http_uri);
+    if (!is_https && ssl)
+        SSL_free(ssl);
+
+    return ret;
+}
 NAMESPACE_FRAMEWORK_END

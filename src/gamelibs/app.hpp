@@ -18,7 +18,6 @@
 #include "framework/worker.hpp"
 #include "framework/xlog.hpp"
 
-#include "httpcli.hpp"
 #include "mongo.hpp"
 #include "redis.hpp"
 
@@ -27,7 +26,6 @@
 NAMESPACE_FRAMEWORK_BEGIN
 
 using namespace gamelibs::redis;
-using namespace gamelibs::httpcli;
 using namespace gamelibs::mongo;
 
 class CApp {
@@ -73,6 +71,8 @@ class CApp {
                                 MYARGS.ApiKey = j["apikey"].get<std::string>();
                             if (j.contains("tokenexpire") && j["tokenexpire"].is_number_unsigned())
                                 MYARGS.TokenExpire = j["tokenexpire"].get<uint32_t>();
+                            if (j.contains("redisttl") && j["redisttl"].is_number_unsigned())
+                                MYARGS.RedisTTL = j["redisttl"].get<uint64_t>();
                         }
                         CINFO("CTX:%s reload config %s", MYARGS.CTXID.c_str(), j.dump().c_str());
                     } catch (const nlohmann::json::exception& e) {
