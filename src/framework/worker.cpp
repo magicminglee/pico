@@ -90,12 +90,12 @@ bool CWorker::Init()
 
     XLOG::LogInit(MYARGS.LogLevel, MYARGS.ModuleName, MYARGS.LogDir, MYARGS.IsVerbose, MYARGS.IsIsolate);
     if (!CSSLContex::Instance().Init()) {
-        CERROR("CTX:%s init ssl contex fail", MYARGS.CTXID.c_str());
+        CERROR("CTX:%s init ssl contex", MYARGS.CTXID.c_str());
         return false;
     }
     if (MYARGS.CertificateFile && MYARGS.PrivateKeyFile) {
         if (!CSSLContex::Instance().LoadCertificateAndPrivateKey(MYARGS.CertificateFile.value(), MYARGS.PrivateKeyFile.value())) {
-            CERROR("CTX:%s load ssl certificate and private key fail", MYARGS.CTXID.c_str());
+            CERROR("CTX:%s load ssl certificate and private key", MYARGS.CTXID.c_str());
             return false;
         }
     }

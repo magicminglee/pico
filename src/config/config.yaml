@@ -8,7 +8,7 @@ main:
   #Specify the log directory.(default current directory)
   logdir: "./mylog/"
   #Specify the server verbosity level[DEBUG INFO TRACE WARN ERROR](default INFO)
-  #loglevel: "DEBUG"
+  loglevel: "DEBUG"
   #Print log to teminal(default false)
   verbose: true
   #Split log file when file is larger than 64MB

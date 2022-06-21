@@ -264,13 +264,22 @@ std::optional<std::string_view> CGlobalData::GetRequestBody() const
     return data;
 }
 
+std::optional<ghttp::HttpStatusCode> CGlobalData::GetResponseStatus() const
+{
+    return rspstatus;
+}
+
+std::optional<std::string_view> CGlobalData::GetResponseBody() const
+{
+    return rspdata;
+}
+
 std::optional<const char*> HttpReason(ghttp::HttpStatusCode code)
 {
-    std::optional<const char*> reason;
     if (auto it = RESPSTR.find(code); it != std::end(RESPSTR))
-        reason = it->second.c_str();
+        return std::optional<const char*>(it->second.c_str());
 
-    return reason;
+    return std::nullopt;
 }
 
 }
@@ -294,9 +303,18 @@ void CHTTPServer::destroy()
 
 struct bufferevent* CHTTPServer::onConnected(struct event_base* base, void* arg)
 {
-    bool* ishttps = (bool*)arg;
-    CINFO("onConnected");
-    return CWorker::MAIN_CONTEX->Bvsocket(-1, nullptr, nullptr, nullptr, nullptr, *ishttps ? CSSLContex::Instance().CreateOneSSL() : nullptr, true);
+    return CWorker::MAIN_CONTEX->Bvsocket(-1, nullptr, nullptr, nullptr, nullptr, *((bool*)arg) ? CSSLContex::Instance().CreateOneSSL() : nullptr, true);
+}
+
+void CHTTPServer::Response(evhttp_request* req, const std::pair<ghttp::HttpStatusCode, std::string>& res)
+{
+    auto evb = evbuffer_new();
+    evbuffer_add(evb, res.second.data(), res.second.length());
+
+    evhttp_send_reply(req, (int32_t)res.first, ghttp::HttpReason(res.first).value_or(""), evb);
+
+    if (evb)
+        evbuffer_free(evb);
 }
 
 static void onDefault(struct evhttp_request* req, void* arg)
@@ -396,7 +414,7 @@ void CHTTPServer::onBindCallback(evhttp_request* req, void* arg)
         char* data = (char*)evbuffer_pullup(buf, -1);
         int32_t dlen = evbuffer_get_length(buf);
 
-        ghttp::CGlobalData g = { .qheaders = headers, .headers = headers, .path = std::string_view(path), .data = std::string_view(data, dlen) };
+        ghttp::CGlobalData g = { .qheaders = &qheaders, .headers = headers, .path = std::string_view(path), .data = std::string_view(data, dlen) };
         auto r = filters->self->EmitEvent("start", &g);
         if (r) {
             evhttp_send_reply(req, (int32_t)r.value().first, ghttp::HttpReason(r.value().first).value_or(""), nullptr);
@@ -419,20 +437,21 @@ void CHTTPServer::onBindCallback(evhttp_request* req, void* arg)
             return;
         }
 
-        auto&& res = filters->cb(&g);
-
-        auto evb = evbuffer_new();
-        evbuffer_add(evb, res.second.data(), res.second.length());
+        if (MYARGS.IsAllowOrigin && MYARGS.IsAllowOrigin.value())
+            evhttp_add_header(evhttp_request_get_output_headers(req), "access-control-allow-origin", "*");
         for (auto& [k, v] : filters->h) {
             evhttp_add_header(evhttp_request_get_output_headers(req), k.c_str(), v.c_str());
         }
-        if (MYARGS.IsAllowOrigin && MYARGS.IsAllowOrigin.value())
-            evhttp_add_header(evhttp_request_get_output_headers(req), "access-control-allow-origin", "*");
 
-        evhttp_send_reply(req, (int32_t)res.first, ghttp::HttpReason(res.first).value_or(""), evb);
+        auto res = filters->cb(&g, req);
 
-        if (evb)
-            evbuffer_free(evb);
+        if (res) {
+            CHTTPServer::Response(req, res.value());
+            g.rspstatus = res.value().first;
+            g.rspdata = std::string_view(res.value().second.data(), res.value().second.size());
+            filters->self->EmitEvent("finish", &g);
+        }
+
         return;
     }
 err:
@@ -551,59 +570,59 @@ bool CHTTPServer::setOption(const int32_t fd)
     return true;
 }
 
-void CHTTPServer::SetTLSData(const std::string key, std::string&& val)
-{
-    m_tlsdata[key] = val;
-}
-
-void CHTTPServer::DelTLSData(const std::string key)
-{
-    if (auto it = m_tlsdata.find(key); it != std::end(m_tlsdata))
-        m_tlsdata.erase(it);
-}
-
-std::optional<std::string_view> CHTTPServer::GetTLSData(const std::string key)
-{
-    if (auto it = m_tlsdata.find(key); it != std::end(m_tlsdata)) {
-        return it->second;
-    }
-    return std::nullopt;
-}
-
-///////////////////////////////////////////////////////////////CHTTPCli/////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////CHTTPProxy/////////////////////////////////////////////////////////////////////////
 static thread_local struct evhttp_connection* tls_evconn = nullptr;
-bool CHTTPCli::Emit(std::string_view url,
+
+bool CHTTPProxy::Get(std::string_view url, CallbackFuncType cb)
+{
+    return Emit(url, cb, ghttp::HttpMethod::GET, std::nullopt);
+}
+
+bool CHTTPProxy::Post(std::string_view url, CallbackFuncType cb, std::optional<std::string_view> data)
+{
+    return Emit(url, cb, ghttp::HttpMethod::POST, data);
+}
+
+bool CHTTPProxy::Emit(std::string_view url,
     CallbackFuncType cb,
     ghttp::HttpMethod cmd,
     std::optional<std::string_view> data,
     std::map<std::string, std::string> headers)
 {
-    CHTTPCli* self = CNEW CHTTPCli();
+    CHTTPProxy* self = CNEW CHTTPProxy();
     self->m_callback = cb;
-    if (!self->request(url.data(), (uint32_t)cmd, std::move(data), headers, CHTTPCli::delegateCallback)) {
+    if (!self->request(url.data(), (uint32_t)cmd, std::move(data), headers, CHTTPProxy::delegateCallback)) {
         CDEL(self);
         return false;
     }
     return true;
 }
 
-void CHTTPCli::delegateCallback(struct evhttp_request* req, void* arg)
+void CHTTPProxy::delegateCallback(struct evhttp_request* req, void* arg)
 {
-    std::pair<ghttp::HttpStatusCode, std::optional<std::string_view>> result;
-    CHTTPCli* self = (CHTTPCli*)arg;
+    std::pair<ghttp::HttpStatusCode, std::optional<std::string_view>> result = { ghttp::HttpStatusCode::BADREQUEST, ghttp::HttpReason(ghttp::HttpStatusCode::BADREQUEST).value() };
+    CHTTPProxy* self = (CHTTPProxy*)arg;
     ghttp::CGlobalData g;
-    if (req) {
+    while (req) {
+        // decode headers
+        auto headers = evhttp_request_get_input_headers(req);
+        auto path = evhttp_request_get_uri(req);
+        if (!path) {
+            break;
+        }
+        // decode the payload
         struct evbuffer* buf = evhttp_request_get_input_buffer(req);
         char* data = (char*)evbuffer_pullup(buf, -1);
         auto dlen = evbuffer_get_length(buf);
 
-        g.headers = evhttp_request_get_input_headers(req);
+        g.headers = headers;
+        g.path = std::string_view(path);
+        g.data = std::string_view(data, dlen);
         if (data)
-            result = { ghttp::HttpStatusCode(evhttp_request_get_response_code(req)), std::string_view(data, dlen) };
+            result = { ghttp::HttpStatusCode(evhttp_request_get_response_code(req)), g.data };
         else
             result = { ghttp::HttpStatusCode(evhttp_request_get_response_code(req)), std::nullopt };
-    } else {
-        result = { ghttp::HttpStatusCode::BADREQUEST, std::nullopt };
+        break;
     }
 
     if (self->m_callback)
@@ -616,7 +635,7 @@ static void delegateCloseCallback(struct evhttp_connection* req, void* arg)
     tls_evconn = nullptr;
 }
 
-bool CHTTPCli::request(const char* url,
+bool CHTTPProxy::request(const char* url,
     const uint32_t method,
     std::optional<std::string_view> body,
     std::optional<std::map<std::string, std::string>> headers,

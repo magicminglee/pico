@@ -5,6 +5,7 @@
 #include "framework/connhandler.hpp"
 #include "framework/global.hpp"
 #include "framework/httpserver.hpp"
+#include "framework/localstorage.hpp"
 #include "framework/random.hpp"
 #include "framework/service.hpp"
 #include "framework/signal.hpp"

@@ -1,10 +1,11 @@
-cmake_minimum_required(VERSION 3.10.0)
+cmake_minimum_required(VERSION 3.12.0)
 
 project(PICO)
 
 message(STATUS "compiler: " ${CMAKE_CXX_COMPILER_ID})
 
 include(CheckIncludeFileCXX)
+#set(CMAKE_CXX_STANDARD 20)
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake_modules/)
 
 check_include_file_cxx(any HAS_ANY)
@@ -73,6 +74,10 @@ endif ()
 
 if(NOT ("${CMAKE_BUILD_TYPE}" STREQUAL "Debug" OR "${CMAKE_BUILD_TYPE}" STREQUAL "Release"))
 	message(FATAL_ERROR "FATAL: no build type supplyed are not allowed. You should add -DCMAKE_BUILD_TYPE=Debug|Release option. ")
+elseif("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
+	add_definitions(-D_DEBUG_MODE)
+elseif("${CMAKE_BUILD_TYPE}" STREQUAL "Release")
+	add_definitions(-D_RELEASE_MODE)
 endif()
 
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g -Wall -Wno-unused-function -Wno-unused-variable")
