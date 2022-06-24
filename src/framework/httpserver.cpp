@@ -414,7 +414,11 @@ void CHTTPServer::onBindCallback(evhttp_request* req, void* arg)
         char* data = (char*)evbuffer_pullup(buf, -1);
         int32_t dlen = evbuffer_get_length(buf);
 
-        ghttp::CGlobalData g = { .qheaders = &qheaders, .headers = headers, .path = std::string_view(path), .data = std::string_view(data, dlen) };
+        ghttp::CGlobalData g; 
+        g.qheaders = &qheaders;
+        g.headers = headers;
+        g.path = std::string_view(path);
+        g.data = std::string_view(data, dlen);
         auto r = filters->self->EmitEvent("start", &g);
         if (r) {
             evhttp_send_reply(req, (int32_t)r.value().first, ghttp::HttpReason(r.value().first).value_or(""), nullptr);

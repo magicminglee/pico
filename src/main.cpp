@@ -36,7 +36,6 @@ std::optional<int64_t> getNextSequenceId(const std::string& name)
     return std::nullopt;
 }
 
-static std::unordered_map<int64_t, std::string> GUserCached;
 void CApp::Register(std::shared_ptr<CHTTPServer> hs)
 {
     hs->RegEvent("finish",
@@ -152,7 +151,7 @@ void CApp::Register(std::shared_ptr<CHTTPServer> hs)
 
                 if (uid) {
                     auto token = jwt::create<jwt::traits::nlohmann_json>()
-                                     .set_expires_at(jwt::date::clock::now() + std::chrono::minutes(MYARGS.TokenExpire.value_or(5)))
+                                     .set_expires_at(jwt::date::clock::now() + std::chrono::minutes(MYARGS.TokenExpire.value()))
                                      .set_type("JWS")
                                      .set_payload_claim("uid", uid.value())
                                      .set_payload_claim("type", j["type"].get<std::string>())

@@ -137,6 +137,8 @@ bool CArgument::ParseYaml()
     }
     if (config["main"] && config["main"].IsMap() && config["main"]["tokenexpire"]) {
         TokenExpire = config["main"]["tokenexpire"].as<uint32_t>();
+    } else {
+        TokenExpire = 10;
     }
 
     if (config["main"] && config["main"].IsMap() && config["main"]["hosts"] && config["main"]["hosts"].IsSequence()) {

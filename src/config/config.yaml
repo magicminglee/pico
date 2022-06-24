@@ -28,8 +28,8 @@ main:
   modulename: "pico"
   #Api Key
   apikey: "2fw$23x@AXh8nqQ!"
-  #token expire time(minutes)
-  tokenexpire: 1440
+  #token expire minutes(default 10 minutes)
+  tokenexpire: 10080
   #maxframe bytes(default 64KB)
   #maxframesize: 65536
   #Redis connect url
