@@ -97,7 +97,7 @@ private:
     std::unordered_map<std::string, std::function<HttpEventType>> m_ev_callbacks;
 };
 
-class CHTTPProxy {
+class CHTTPClient {
     typedef void (*HttpHandleCallbackFunc)(struct evhttp_request* req, void* arg);
     using CallbackFuncType = std::function<void(const ghttp::CGlobalData*, ghttp::HttpStatusCode, std::optional<std::string_view>)>;
 

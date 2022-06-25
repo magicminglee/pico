@@ -226,8 +226,8 @@ void CApp::Register(std::shared_ptr<CHTTPServer> hs)
             const auto uid = g->GetUid().value();
             auto v = g->GetHeaderByKey("Authorization").value_or("");
             auto auth = std::string(v.data(), v.size());
-            CHTTPProxy::Emit("https://dev.wgnice.com:9021/game/v1/getuser",
-                [uid, auth, req](const ghttp::CGlobalData* g, ghttp::HttpStatusCode status, std::optional<std::string_view> data) {
+            CHTTPClient::Emit("https://dev.wgnice.com:9021/game/v1/getuser",
+                [auth, req](const ghttp::CGlobalData* g, ghttp::HttpStatusCode status, std::optional<std::string_view> data) {
                     if (data) {
                         CHTTPServer::Response(req, { status, std::string(data.value().data(), data.value().length()) });
                     } else {

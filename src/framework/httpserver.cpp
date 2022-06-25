@@ -574,38 +574,38 @@ bool CHTTPServer::setOption(const int32_t fd)
     return true;
 }
 
-///////////////////////////////////////////////////////////////CHTTPProxy/////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////CHTTPClient/////////////////////////////////////////////////////////////////////////
 static thread_local struct evhttp_connection* tls_evconn = nullptr;
 
-bool CHTTPProxy::Get(std::string_view url, CallbackFuncType cb)
+bool CHTTPClient::Get(std::string_view url, CallbackFuncType cb)
 {
     return Emit(url, cb, ghttp::HttpMethod::GET, std::nullopt);
 }
 
-bool CHTTPProxy::Post(std::string_view url, CallbackFuncType cb, std::optional<std::string_view> data)
+bool CHTTPClient::Post(std::string_view url, CallbackFuncType cb, std::optional<std::string_view> data)
 {
     return Emit(url, cb, ghttp::HttpMethod::POST, data);
 }
 
-bool CHTTPProxy::Emit(std::string_view url,
+bool CHTTPClient::Emit(std::string_view url,
     CallbackFuncType cb,
     ghttp::HttpMethod cmd,
     std::optional<std::string_view> data,
     std::map<std::string, std::string> headers)
 {
-    CHTTPProxy* self = CNEW CHTTPProxy();
+    CHTTPClient* self = CNEW CHTTPClient();
     self->m_callback = cb;
-    if (!self->request(url.data(), (uint32_t)cmd, std::move(data), headers, CHTTPProxy::delegateCallback)) {
+    if (!self->request(url.data(), (uint32_t)cmd, std::move(data), headers, CHTTPClient::delegateCallback)) {
         CDEL(self);
         return false;
     }
     return true;
 }
 
-void CHTTPProxy::delegateCallback(struct evhttp_request* req, void* arg)
+void CHTTPClient::delegateCallback(struct evhttp_request* req, void* arg)
 {
     std::pair<ghttp::HttpStatusCode, std::optional<std::string_view>> result = { ghttp::HttpStatusCode::BADREQUEST, ghttp::HttpReason(ghttp::HttpStatusCode::BADREQUEST).value() };
-    CHTTPProxy* self = (CHTTPProxy*)arg;
+    CHTTPClient* self = (CHTTPClient*)arg;
     ghttp::CGlobalData g;
     while (req) {
         // decode headers
@@ -639,7 +639,7 @@ static void delegateCloseCallback(struct evhttp_connection* req, void* arg)
     tls_evconn = nullptr;
 }
 
-bool CHTTPProxy::request(const char* url,
+bool CHTTPClient::request(const char* url,
     const uint32_t method,
     std::optional<std::string_view> body,
     std::optional<std::map<std::string, std::string>> headers,
