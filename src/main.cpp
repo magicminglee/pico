@@ -1,5 +1,7 @@
 #include "gamelibs/app.hpp"
 
+#include "framework/wsparser.hpp"
+
 #include "jwt-cpp/jwt.h"
 #include "jwt-cpp/traits/nlohmann-json/traits.h"
 
@@ -39,7 +41,14 @@ std::optional<int64_t> getNextSequenceId(const std::string& name)
 void CApp::Register(std::shared_ptr<CHTTPServer> hs)
 {
     hs->RegEvent("finish",
-        [](ghttp::CGlobalData* g) -> std::optional<std::pair<ghttp::HttpStatusCode, std::string>> {
+        [](ghttp::CGlobalData* g, evhttp_request* req) -> std::optional<std::pair<ghttp::HttpStatusCode, std::string>> {
+            if (g->GetRequestPath().value_or("") == "/game/ws") {
+                CWebSocket::OnVerify(evhttp_request_get_connection(req),
+                    [](CWebSocket* self, std::string_view data) -> bool {
+                        self->SendCmd(CWSParser::WS_OPCODE_TXTFRAME, data);
+                        return true;
+                    });
+            }
 #ifdef _DEBUG_MODE
             auto status = g->GetResponseStatus().value_or(ghttp::HttpStatusCode::OK);
             auto body = std::string(g->GetResponseBody().value_or("").data(), g->GetResponseBody().value_or("").length());
@@ -48,7 +57,7 @@ void CApp::Register(std::shared_ptr<CHTTPServer> hs)
             return std::nullopt;
         });
     hs->RegEvent("start",
-        [](ghttp::CGlobalData* g) -> std::optional<std::pair<ghttp::HttpStatusCode, std::string>> {
+        [](ghttp::CGlobalData* g, evhttp_request*) -> std::optional<std::pair<ghttp::HttpStatusCode, std::string>> {
             if (g->GetRequestPath().value_or("") == "/game/v1/login") {
 #ifdef _DEBUG_MODE
                 auto path = std::string(g->GetRequestPath().value_or("").data(), g->GetRequestPath().value_or("").length());
@@ -227,9 +236,9 @@ void CApp::Register(std::shared_ptr<CHTTPServer> hs)
             auto v = g->GetHeaderByKey("Authorization").value_or("");
             auto auth = std::string(v.data(), v.size());
             CHTTPClient::Emit("https://dev.wgnice.com:9021/game/v1/getuser",
-                [auth, req](const ghttp::CGlobalData* g, ghttp::HttpStatusCode status, std::optional<std::string_view> data) {
-                    if (data) {
-                        CHTTPServer::Response(req, { status, std::string(data.value().data(), data.value().length()) });
+                [req](const ghttp::CGlobalData* g, evhttp_connection*) {
+                    if (g->data) {
+                        CHTTPServer::Response(req, { g->GetResponseStatus().value(), std::string(g->data.value().data(), g->data.value().length()) });
                     } else {
                         CERROR("null data");
                     }
@@ -238,5 +247,54 @@ void CApp::Register(std::shared_ptr<CHTTPServer> hs)
                 std::nullopt,
                 { { "Authorization", auth.data() } });
             return std::nullopt;
+        });
+
+    hs->Register(
+        "/game/ws",
+        ghttp::HttpMethod((uint32_t)ghttp::HttpMethod::GET | (uint32_t)ghttp::HttpMethod::POST),
+        [hs](const ghttp::CGlobalData* g, evhttp_request* req) -> std::optional<std::pair<ghttp::HttpStatusCode, std::string>> {
+            evhttp_add_header(evhttp_request_get_output_headers(req), "Connection", "upgrade");
+            auto v = g->GetHeaderByKey("sec-websocket-key");
+            if (v) {
+                std::string swsk(v.value().data(), v.value().length());
+                swsk = CWSParser::GenSecWebSocketAccept(swsk);
+                evhttp_add_header(evhttp_request_get_output_headers(req), "Sec-WebSocket-Accept", swsk.c_str());
+                evhttp_add_header(evhttp_request_get_output_headers(req), "Upgrade", "websocket");
+                return std::optional<std::pair<ghttp::HttpStatusCode, std::string>>({ ghttp::HttpStatusCode::SWITCH, "" });
+            }
+            return std::optional<std::pair<ghttp::HttpStatusCode, std::string>>({ ghttp::HttpStatusCode::FORBIDDEN, "" });
+        });
+
+    hs->Register(
+        "/game/wscli",
+        ghttp::HttpMethod::POST,
+        [hs](const ghttp::CGlobalData* g, evhttp_request* req) -> std::optional<std::pair<ghttp::HttpStatusCode, std::string>> {
+            const auto uid = g->GetUid().value();
+            std::string url = "wss://access.indigames.in:9028";
+            auto [_, host, port] = CConnection::SplitUri(url);
+            auto key = CWSParser::GenSecWebSocketAccept(std::to_string(time(nullptr)));
+            CHTTPClient::Emit(
+                url,
+                [key](const ghttp::CGlobalData* g, evhttp_connection* evconn) {
+                    auto seckey = g->GetHeaderByKey("sec-websocket-accept");
+                    if (seckey) {
+                        auto sk = std::string(seckey.value().data(), seckey.value().length());
+                        if (sk == CWSParser::GenSecWebSocketAccept(key)) {
+                            CWebSocket::OnVerify(evconn,
+                                [](CWebSocket*, std::string_view data) -> bool { return true; });
+                        }
+                    }
+                },
+                ghttp::HttpMethod::GET,
+                std::nullopt,
+                {
+                    { "Connection", "upgrade" },
+                    { "Host", host },
+                    { "Upgrade", "websocket" },
+                    { "Sec-WebSocket-Version", "13" },
+                    { "Sec-WebSocket-Key", key },
+                });
+            nlohmann::json js;
+            return std::optional<std::pair<ghttp::HttpStatusCode, std::string>>({ ghttp::HttpStatusCode::OK, js.dump() });
         });
 }

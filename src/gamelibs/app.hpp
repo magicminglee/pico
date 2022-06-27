@@ -15,7 +15,6 @@
 #include "framework/tcpserver.hpp"
 #include "framework/udpserver.hpp"
 #include "framework/utils.hpp"
-#include "framework/websocket.hpp"
 #include "framework/worker.hpp"
 #include "framework/xlog.hpp"
 
@@ -98,7 +97,7 @@ class CApp {
                     m_http_server.push_back(std::make_shared<CHTTPServer>());
                     auto ref = m_http_server.back();
                     if (!ref->Init(v)) {
-                        CERROR("CTX:%s HttpServer::Init %s fail", MYARGS.CTXID.c_str(), v.c_str());
+                        CERROR("CTX:%s HttpServer::Init %s", MYARGS.CTXID.c_str(), v.c_str());
                         continue;
                     }
                     CApp::Register(ref);

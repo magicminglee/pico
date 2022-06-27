@@ -88,6 +88,22 @@ public:
     {
         return (hashworkerid & 0xFFFF0000) | ((hashworkerid & 0xFF00) >> 8);
     }
+    static uint32_t Hton32(const uint32_t v)
+    {
+        return htonl(v);
+    }
+    static uint32_t Ntoh32(const uint32_t v)
+    {
+        return ntohl(v);
+    }
+    static uint32_t Hton16(const uint16_t v)
+    {
+        return htons(v);
+    }
+    static uint32_t Ntoh16(const uint32_t v)
+    {
+        return ntohs(v);
+    }
 
     static std::string Base64Encode(const std::string& in);
     static std::string Base64Decode(const std::string& in);

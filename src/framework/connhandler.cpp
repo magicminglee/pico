@@ -10,8 +10,6 @@
 #include "utils.hpp"
 #include "xlog.hpp"
 
-#include "picohttpparser/picohttpparser.h"
-
 NAMESPACE_FRAMEWORK_BEGIN
 
 bool CConnectionHandler::init(const int32_t fd, bufferevent_data_cb rcb, bufferevent_data_cb wcb, bufferevent_event_cb ecb, SSL* ssl, bool accept)
@@ -28,11 +26,11 @@ bool CConnectionHandler::init(const int32_t fd, bufferevent_data_cb rcb, buffere
         char addrbuf[64] = { 0 };
         if (addr.ss_family == AF_INET) { // IPV4
             struct sockaddr_in* s = (struct sockaddr_in*)&addr;
-            c->m_peer_port = ntohs(s->sin_port);
+            c->m_peer_port = CUtils::Hton16(s->sin_port);
             evutil_inet_ntop(AF_INET, &s->sin_addr, addrbuf, sizeof(addrbuf));
         } else { // IPV6
             struct sockaddr_in6* s = (struct sockaddr_in6*)&addr;
-            c->m_peer_port = ntohs(s->sin6_port);
+            c->m_peer_port = CUtils::Hton16(s->sin6_port);
             evutil_inet_ntop(AF_INET6, &s->sin6_addr, addrbuf, sizeof(addrbuf));
         }
         c->m_peer_ip = addrbuf;
@@ -49,43 +47,23 @@ bool CConnectionHandler::init(const int32_t fd, bufferevent_data_cb rcb, buffere
 bool CConnectionHandler::Connect(std::string host, std::optional<bool> ipv6)
 {
     auto [schema, hostname, port] = CConnection::SplitUri(host);
-    SSL* ssl = nullptr;
-    if (schema == "https" || schema == "wss") {
-        ssl = CSSLContex::Instance().CreateOneSSL();
-        if (ssl)
-            SSL_ctrl(ssl, SSL_CTRL_SET_TLSEXT_HOSTNAME, TLSEXT_NAMETYPE_host_name, (void*)host.data());
-    }
-    CheckCondition(Init(-1, ssl), false);
-    if (ssl)
-        bufferevent_openssl_set_allow_dirty_shutdown(m_conn->m_bev, 1);
+    CheckCondition(Init(-1), false);
     m_conn->m_host = host;
     m_conn->SetStreamTypeBySchema(schema);
     return m_conn->Connnect(hostname, std::stoi(port), ipv6 ? false : true);
 }
 
-void CConnectionHandler::OnConnected()
-{
-    if (m_connected_callback) {
-        m_connected_callback(this);
-    }
-}
-
-CConnectionHandler::CConnectionHandler(CReadCBFunc readcb,
-    CCloseCBFunc closecb,
-    CConnectedCBFunc connectedcb,
-    std::unordered_map<std::string, std::string> headers)
+CConnectionHandler::CConnectionHandler(CReadCBFunc readcb, CCloseCBFunc closecb)
 {
     m_read_callback = std::move(readcb);
     m_close_callback = std::move(closecb);
-    m_connected_callback = std::move(connectedcb);
-    m_http_headers = std::move(headers);
 }
 
-bool CConnectionHandler::Init(const int32_t fd, SSL* ssl)
+bool CConnectionHandler::Init(const int32_t fd)
 {
     m_first_package = true;
     m_conn.reset(CNEW CConnection());
-    return CConnectionHandler::init(fd, OnRead, OnWrite, OnError, ssl, fd > 0);
+    return CConnectionHandler::init(fd, OnRead, OnWrite, OnError, nullptr, fd > 0);
 }
 
 bool CConnectionHandler::SendXGameMsg(const uint16_t maincmd, const uint16_t subcmd, const std::string_view data)
@@ -135,21 +113,6 @@ int32_t CConnectionHandler::handleHeadPacket(const std::string_view data)
         } else if (0 == res) {
             CDEBUG("CTX:%s HAProxy to be continue:%p,%ld", MYARGS.CTXID.c_str(), this, Id());
         }
-    } else if (m_conn->IsStreamType(CConnection::StreamType::StreamType_WS) || m_conn->IsStreamType(CConnection::StreamType::StreamType_WSS)) { // WS/WSS
-        std::string upgrade;
-        res = m_conn->m_ws.Handshake(data.data(), data.size(), upgrade);
-        if (res == -2) {
-            res = 0;
-            CDEBUG("CTX:%s websocket handshake to be continue:%p,%ld", MYARGS.CTXID.c_str(), this, Id());
-        } else if (res > 0) {
-            CDEBUG("CTX:%s websocket handshake to be OK:%p,%ld,%s", MYARGS.CTXID.c_str(), this, Id(), upgrade.c_str());
-            if (!upgrade.empty())
-                m_conn->sendcmd(upgrade.data(), upgrade.size());
-
-            if (m_connected_callback)
-                m_connected_callback(this);
-            return res;
-        }
     }
     return res;
 }
@@ -176,7 +139,7 @@ void CConnectionHandler::OnRead(struct bufferevent* bev, void* arg)
             if (ret > 0) {
                 evbuffer_drain(input, ret);
                 len = evbuffer_get_length(input);
-                //<<<packet(HAProxy->Websocket/Http)
+                //<<<packet(HAProxy->RawPacket)
                 if (self->m_conn->IsStreamType(CConnection::StreamType::StreamType_HAProxy)) {
                     self->m_conn->ShellProxy();
                     continue;
@@ -188,41 +151,15 @@ void CConnectionHandler::OnRead(struct bufferevent* bev, void* arg)
             continue;
         }
 
-        if (self->m_conn->IsStreamType(CConnection::StreamType::StreamType_WS) || self->m_conn->IsStreamType(CConnection::StreamType::StreamType_WSS)) {
-            uint32_t dlen = len > MAX_WATERMARK_SIZE ? MAX_WATERMARK_SIZE : len;
-            evbuffer_copyout(input, buffer, dlen);
-            int32_t ret = self->m_conn->m_ws.Process(buffer, dlen);
-            if (0 == ret) {
-                break;
-            } else if (ret < 0) {
-                CERROR("CTX:%s %p too large websocket frame %u ret %d", MYARGS.CTXID.c_str(), self->m_conn.get(), dlen, ret);
-                if (self->m_close_callback)
-                    self->m_close_callback(self);
-                break;
+        if (self->m_conn->IsStreamType(CConnection::StreamType::StreamType_Tcp)
+            || self->m_conn->IsStreamType(CConnection::StreamType::StreamType_Unix)
+            || self->m_conn->IsStreamType(CConnection::StreamType::StreamType_Udp)) {
+            if (self->m_read_callback) {
+                auto data = (char*)evbuffer_pullup(input, -1);
+                auto dlen = evbuffer_get_length(input);
+                std::string_view sv(data, dlen);
+                self->m_read_callback(0, self, sv);
             }
-            if (self->m_conn->m_ws.IsFin()) {
-                if (self->m_conn->m_ws.IsPong()) {
-                } else if (self->m_conn->m_ws.IsPing()) {
-                    auto cf = self->m_conn->m_ws.ControlFrame();
-                    if (!cf.empty()) {
-                        self->m_conn->SendCmd(cf.data(), cf.size(), CWebSocket::WS_OPCODE_PONG);
-                        // CINFO("CTX:%s %p control frame ping %lu", MYARGS.CTXID.c_str(), self->m_conn.get(), cf.size());
-                    }
-                } else if (self->m_conn->m_ws.IsClose()) {
-                    auto cf = self->m_conn->m_ws.ControlFrame();
-                    if (!cf.empty()) {
-                        self->m_conn->SetFlag(CConnection::ConnectionFlags::ConnectionFlags_Destroy);
-                        self->m_conn->SendCmd(cf.data(), cf.size(), CWebSocket::WS_OPCODE_CLOSE);
-                        CINFO("CTX:%s %p control frame close %lu", MYARGS.CTXID.c_str(), self->m_conn.get(), cf.size());
-                    }
-                } else {
-                    if (auto res = self->m_read_callback(self->m_conn->Id(), self, std::string_view(self->m_conn->m_ws.Rcvbuf(), self->m_conn->m_ws.FrameLen())); !res)
-                        CERROR("CTX:%s %ld command is not register cmdlen 0x%llx", MYARGS.CTXID.c_str(), self->Id(), self->m_conn->m_ws.FrameLen());
-                }
-            }
-            evbuffer_drain(input, ret);
-            len = evbuffer_get_length(input);
-            continue;
         } else {
             CERROR("CTX:%s %ld %lu not supported socket protocol type", MYARGS.CTXID.c_str(), self->Id(), len);
             if (self->m_close_callback)
@@ -246,11 +183,6 @@ void CConnectionHandler::OnError(struct bufferevent* bev, short which, void* arg
 {
     CConnectionHandler* self = (CConnectionHandler*)arg;
     if (which & BEV_EVENT_CONNECTED) {
-        CINFO("CTX:%s connection has connected:%p,%ld,0x%x,%p", MYARGS.CTXID.c_str(), self->m_conn.get(), self->m_conn->Id(), which, self->m_conn.get());
-        self->m_conn->OnConnected(self->m_http_headers);
-        if (self->m_connected_callback && self->m_conn->IsStreamType(CConnection::StreamType::StreamType_HTTPS))
-            self->m_connected_callback(self);
-        return;
     } else if (which & BEV_EVENT_EOF) {
     } else if (which & BEV_EVENT_ERROR) {
     } else if (which & BEV_EVENT_TIMEOUT) {

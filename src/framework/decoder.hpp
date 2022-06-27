@@ -25,13 +25,13 @@ public:
     {
         XGAMEExternalHeader h;
         uint32_t offset = 0;
-        h.cmdid = ntohl(*(int32_t*)(m_data + offset));
+        h.cmdid = CUtils::Ntoh32(*(int32_t*)(m_data + offset));
         offset += sizeof(int32_t);
         CheckCondition(offset < m_dlen, std::make_tuple(false, 0, nullptr, 0));
-        h.bodylen = ntohl(*(int32_t*)(m_data + offset));
+        h.bodylen = CUtils::Ntoh32(*(int32_t*)(m_data + offset));
         offset += sizeof(int32_t);
         CheckCondition(offset < m_dlen, std::make_tuple(false, 0, nullptr, 0));
-        h.seq = ntohl(*(int32_t*)(m_data + offset));
+        h.seq = CUtils::Ntoh32(*(int32_t*)(m_data + offset));
         offset += sizeof(int32_t);
         CheckCondition(offset <= m_dlen, std::make_tuple(false, 0, nullptr, 0));
         return std::make_tuple(true, h.cmdid, m_data + XGAME_PACKET_HEADER_LENGTH, h.DataSize());
@@ -74,7 +74,7 @@ public:
         memcpy(&hdr.hahdr, m_data, m_dlen);
         int32_t size = 0;
         if (m_dlen >= 16 && memcmp(&hdr.hahdr.v2, xgame_haproxy_v2sig, 12) == 0 && (hdr.hahdr.v2.ver_cmd & 0xF0) == 0x20) {
-            size = 16 + ntohs(hdr.hahdr.v2.len);
+            size = 16 + CUtils::Hton16(hdr.hahdr.v2.len);
             if ((int32_t)m_dlen < size)
                 return 0; /* truncated or too large header */
 
@@ -83,15 +83,15 @@ public:
                 switch (hdr.hahdr.v2.fam) {
                 case 0x11: /* TCPv4 */
                     hdr.family = AF_INET;
-                    hdr.hahdr.v2.addr.ip4.src_addr = ntohl(hdr.hahdr.v2.addr.ip4.src_addr);
-                    hdr.hahdr.v2.addr.ip4.src_port = ntohs(hdr.hahdr.v2.addr.ip4.src_port);
-                    hdr.hahdr.v2.addr.ip4.dst_addr = ntohl(hdr.hahdr.v2.addr.ip4.dst_addr);
-                    hdr.hahdr.v2.addr.ip4.dst_port = ntohs(hdr.hahdr.v2.addr.ip4.dst_port);
+                    hdr.hahdr.v2.addr.ip4.src_addr = CUtils::Ntoh32(hdr.hahdr.v2.addr.ip4.src_addr);
+                    hdr.hahdr.v2.addr.ip4.src_port = CUtils::Hton16(hdr.hahdr.v2.addr.ip4.src_port);
+                    hdr.hahdr.v2.addr.ip4.dst_addr = CUtils::Ntoh32(hdr.hahdr.v2.addr.ip4.dst_addr);
+                    hdr.hahdr.v2.addr.ip4.dst_port = CUtils::Hton16(hdr.hahdr.v2.addr.ip4.dst_port);
                     goto done;
                 case 0x21: /* TCPv6 */
                     hdr.family = AF_INET6;
-                    hdr.hahdr.v2.addr.ip6.src_port = ntohs(hdr.hahdr.v2.addr.ip6.src_port);
-                    hdr.hahdr.v2.addr.ip6.dst_port = ntohs(hdr.hahdr.v2.addr.ip6.dst_port);
+                    hdr.hahdr.v2.addr.ip6.src_port = CUtils::Hton16(hdr.hahdr.v2.addr.ip6.src_port);
+                    hdr.hahdr.v2.addr.ip6.dst_port = CUtils::Hton16(hdr.hahdr.v2.addr.ip6.dst_port);
                     goto done;
                 }
                 /* unsupported protocol, keep local connection address */

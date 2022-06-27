@@ -31,7 +31,7 @@ auto CConnection::SplitUri(const std::string& uri)
     if (pos == std::string::npos) {
         // Set the default port.
         std::string port = "80";
-        if (type == "wss")
+        if (type == "https" || type == "wss")
             port = "443";
         pos = uri.find("/", start);
         return std::make_tuple(type, uri.substr(start, pos - start), port);
@@ -56,13 +56,9 @@ void CConnection::SetStreamTypeBySchema(const std::string& schema)
     static std::map<const std::string, StreamType> STREAMMAP = {
         { "raw", StreamType::StreamType_Raw },
         { "haproxy", StreamType::StreamType_HAProxy },
-        { "ws", StreamType::StreamType_WS },
-        { "http", StreamType::StreamType_HTTP },
         { "tcp", StreamType::StreamType_Tcp },
         { "udp", StreamType::StreamType_Udp },
         { "unix", StreamType::StreamType_Unix },
-        { "wss", StreamType::StreamType_WSS },
-        { "https", StreamType::StreamType_HTTPS }
     };
     if (auto pos = schema.find("->"); pos != std::string::npos)
         m_schema = schema.substr(0, pos);
@@ -99,40 +95,18 @@ bool CConnection::Destroy()
     return IsFlag(ConnectionFlags_Destroy);
 }
 
-void CConnection::OnConnected(const std::unordered_map<std::string, std::string>& headers)
-{
-    if (IsStreamType(StreamType::StreamType_WS) || IsStreamType(StreamType::StreamType_WSS)) {
-        if (auto data = m_ws.OpenHandFrame(m_host, headers); data) {
-            CINFO("opening handshake %p %s", this, data.value().c_str());
-            sendcmd(data.value().data(), data.value().size());
-        }
-    }
-}
-
 bool CConnection::Connnect(const std::string host, const uint16_t port, bool ipv4_or_ipv6)
 {
     CheckCondition(m_bev, false);
     return 0 == bufferevent_socket_connect_hostname(m_bev, nullptr, ipv4_or_ipv6 ? AF_INET : AF_INET6, host.c_str(), port);
 }
 
-bool CConnection::sendcmd(const void* data, const uint32_t dlen)
+bool CConnection::SendCmd(const void* data, const uint32_t dlen)
 {
     CheckCondition(m_bev, false);
     struct evbuffer* output = bufferevent_get_output(m_bev);
     CheckCondition(output, false);
     return -1 != evbuffer_add(output, data, dlen);
-}
-
-bool CConnection::SendCmd(const void* data, const uint32_t dlen, std::optional<uint8_t> opcode, std::optional<uint32_t> maskkey)
-{
-    if (IsStreamType(StreamType::StreamType_WS) || IsStreamType(StreamType::StreamType_WSS)) {
-        if (auto res = m_ws.Frame((char*)data, dlen, opcode.value_or(m_ws.GetFrameType()), maskkey.value_or(m_ws.GetMaskingKey())); res) {
-            for (auto&& v : res.value()) {
-                return sendcmd(v.data(), v.size());
-            }
-        }
-    }
-    return sendcmd(data, dlen);
 }
 
 bool CConnection::SendXGameMsg(const uint16_t maincmd, const uint16_t subcmd, const std::string_view data)
