@@ -63,8 +63,28 @@ public:
 };
 }
 
+class CWebSocket {
+public:
+    using Callback = std::function<bool(CWebSocket*, std::string_view)>;
+    static CWebSocket* OnVerify(evhttp_connection* evconn, Callback rdfunc);
+    bool SendCmd(const CWSParser::WS_OPCODE opcode, std::string_view data);
+    static bool Connect(const std::string& url, Callback cb);
+
+private:
+    CWebSocket(evhttp_connection* evconn);
+    ~CWebSocket();
+    static void onRead(struct bufferevent* bev, void* arg);
+    static void onWrite(struct bufferevent* bev, void* arg);
+    static void onError(struct bufferevent* bev, short which, void* arg);
+
+private:
+    struct evhttp_connection* m_evconn = { nullptr };
+    CWSParser m_parser;
+    Callback m_rdfunc = { nullptr };
+};
+
 class CHTTPServer : public CObject {
-    typedef std::optional<std::pair<ghttp::HttpStatusCode, std::string>> HttpCallbackType(const ghttp::CGlobalData*, evhttp_request*);
+    typedef bool HttpCallbackType(const ghttp::CGlobalData*, evhttp_request*);
     typedef std::optional<std::pair<ghttp::HttpStatusCode, std::string>> HttpEventType(ghttp::CGlobalData*, evhttp_request*);
 
 public:
@@ -80,13 +100,14 @@ public:
     CHTTPServer(CHTTPServer&&);
     ~CHTTPServer();
     bool Init(std::string host);
+    void ServeWs(const std::string path, CWebSocket::Callback cb);
     bool Register(const std::string path, ghttp::HttpMethod cmd, std::function<HttpCallbackType> cb);
     bool Register(const std::string path, FilterData rd);
     bool RegEvent(std::string ename, std::function<HttpEventType> cb);
-    std::optional<std::pair<ghttp::HttpStatusCode, std::string>> EmitEvent(std::string ename, ghttp::CGlobalData* g, evhttp_request* req);
-    static void Response(evhttp_request* req, const std::pair<ghttp::HttpStatusCode, std::string>& res);
+    static bool Response(evhttp_request* req, const std::pair<ghttp::HttpStatusCode, std::string>& res);
 
 private:
+    std::optional<std::pair<ghttp::HttpStatusCode, std::string>> EmitEvent(std::string ename, ghttp::CGlobalData* g, evhttp_request* req);
     static bufferevent* onConnected(struct event_base*, void*);
     bool setOption(const int32_t fd);
     void destroy();
@@ -120,23 +141,4 @@ private:
     struct evhttp_connection* m_evconn = { nullptr };
 };
 
-class CWebSocket {
-    using Callback = std::function<bool(CWebSocket*, std::string_view)>;
-
-public:
-    static CWebSocket* OnVerify(evhttp_connection* evconn, Callback rdfunc);
-    bool SendCmd(const CWSParser::WS_OPCODE opcode, std::string_view data);
-
-private:
-    CWebSocket(evhttp_connection* evconn);
-    ~CWebSocket();
-    static void onRead(struct bufferevent* bev, void* arg);
-    static void onWrite(struct bufferevent* bev, void* arg);
-    static void onError(struct bufferevent* bev, short which, void* arg);
-
-private:
-    struct evhttp_connection* m_evconn = { nullptr };
-    CWSParser m_parser;
-    Callback m_rdfunc = { nullptr };
-};
 NAMESPACE_FRAMEWORK_END

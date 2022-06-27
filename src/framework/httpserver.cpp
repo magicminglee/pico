@@ -307,7 +307,7 @@ struct bufferevent* CHTTPServer::onConnected(struct event_base* base, void* arg)
     return CWorker::MAIN_CONTEX->Bvsocket(-1, nullptr, nullptr, nullptr, nullptr, *((bool*)arg) ? CSSLContex::Instance().CreateOneSSL() : nullptr, true);
 }
 
-void CHTTPServer::Response(evhttp_request* req, const std::pair<ghttp::HttpStatusCode, std::string>& res)
+bool CHTTPServer::Response(evhttp_request* req, const std::pair<ghttp::HttpStatusCode, std::string>& res)
 {
     auto evb = evbuffer_new();
     evbuffer_add(evb, res.second.data(), res.second.length());
@@ -316,6 +316,7 @@ void CHTTPServer::Response(evhttp_request* req, const std::pair<ghttp::HttpStatu
 
     if (evb)
         evbuffer_free(evb);
+    return true;
 }
 
 static void onDefault(struct evhttp_request* req, void* arg)
@@ -451,9 +452,6 @@ void CHTTPServer::onBindCallback(evhttp_request* req, void* arg)
         auto res = filters->cb(&g, req);
 
         if (res) {
-            CHTTPServer::Response(req, res.value());
-            g.rspstatus = res.value().first;
-            g.rspdata = std::string_view(res.value().second.data(), res.value().second.size());
             filters->self->EmitEvent("finish", &g, req);
         }
 
@@ -461,6 +459,27 @@ void CHTTPServer::onBindCallback(evhttp_request* req, void* arg)
     }
 err:
     evhttp_send_error(req, (int32_t)errcode, 0);
+}
+
+void CHTTPServer::ServeWs(const std::string path, CWebSocket::Callback cb)
+{
+    Register(
+        path,
+        ghttp::HttpMethod::GET,
+        [this, cb](const ghttp::CGlobalData* g, evhttp_request* req) {
+            evhttp_add_header(evhttp_request_get_output_headers(req), "Connection", "upgrade");
+            auto v = g->GetHeaderByKey("sec-websocket-key");
+            if (v) {
+                std::string swsk(v.value().data(), v.value().length());
+                swsk = CWSParser::GenSecWebSocketAccept(swsk);
+                evhttp_add_header(evhttp_request_get_output_headers(req), "Sec-WebSocket-Accept", swsk.c_str());
+                evhttp_add_header(evhttp_request_get_output_headers(req), "Upgrade", "websocket");
+                this->Response(req, { ghttp::HttpStatusCode::SWITCH, "" });
+                CWebSocket::OnVerify(evhttp_request_get_connection(req), cb);
+                return true;
+            }
+            return this->Response(req, { ghttp::HttpStatusCode::FORBIDDEN, "" });
+        });
 }
 
 bool CHTTPServer::Register(const std::string path, FilterData filter)
@@ -792,6 +811,32 @@ CWebSocket::~CWebSocket()
         evhttp_connection_free(m_evconn);
         m_evconn = nullptr;
     }
+}
+
+bool CWebSocket::Connect(const std::string& url, Callback cb)
+{
+    auto [_, host, port] = CConnection::SplitUri(url);
+    auto key = CWSParser::GenSecWebSocketAccept(std::to_string(time(nullptr)));
+    return (bool)CHTTPClient::Emit(
+        url,
+        [key, cb](const ghttp::CGlobalData* g, evhttp_connection* evconn) {
+            auto seckey = g->GetHeaderByKey("sec-websocket-accept");
+            if (seckey) {
+                auto sk = std::string(seckey.value().data(), seckey.value().length());
+                if (sk == CWSParser::GenSecWebSocketAccept(key)) {
+                    CWebSocket::OnVerify(evconn, cb);
+                }
+            }
+        },
+        ghttp::HttpMethod::GET,
+        std::nullopt,
+        {
+            { "Connection", "upgrade" },
+            { "Host", host },
+            { "Upgrade", "websocket" },
+            { "Sec-WebSocket-Version", "13" },
+            { "Sec-WebSocket-Key", key },
+        });
 }
 
 bool CWebSocket::SendCmd(const CWSParser::WS_OPCODE opcode, std::string_view data)
