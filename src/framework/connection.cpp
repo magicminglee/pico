@@ -7,14 +7,6 @@
 
 NAMESPACE_FRAMEWORK_BEGIN
 
-static const uint16_t SERVERCMDTYPE_SHARED = 0xFF00;
-static const uint16_t SERVERCMDTYPE_FORWARD = 0xFE00;
-static const uint16_t SERVERCMDTYPE_BROADCAST = 0xFD00;
-static const uint16_t SERVERCMDTYPE_CLIENT = 0xFC00;
-
-static const uint8_t BROADCASTTYPE_EXCEPTUSERS = 1;
-static const uint8_t BROADCASTTYPE_SPECIFIEDUSERS = 2;
-
 auto CConnection::SplitUri(const std::string& uri)
     -> std::tuple<std::string, std::string, std::string>
 {
@@ -59,6 +51,7 @@ void CConnection::SetStreamTypeBySchema(const std::string& schema)
         { "tcp", StreamType::StreamType_Tcp },
         { "udp", StreamType::StreamType_Udp },
         { "unix", StreamType::StreamType_Unix },
+        { "http2", StreamType::StreamType_HTTP2 },
     };
     if (auto pos = schema.find("->"); pos != std::string::npos)
         m_schema = schema.substr(0, pos);
@@ -90,9 +83,9 @@ CConnection::~CConnection()
     CINFO("free cconnection %p", this);
 }
 
-bool CConnection::Destroy()
+bool CConnection::IsClosing()
 {
-    return IsFlag(ConnectionFlags_Destroy);
+    return IsFlag(ConnectionFlags_Closing);
 }
 
 bool CConnection::Connnect(const std::string host, const uint16_t port, bool ipv4_or_ipv6)

@@ -74,7 +74,7 @@ public:
         memcpy(&hdr.hahdr, m_data, m_dlen);
         int32_t size = 0;
         if (m_dlen >= 16 && memcmp(&hdr.hahdr.v2, xgame_haproxy_v2sig, 12) == 0 && (hdr.hahdr.v2.ver_cmd & 0xF0) == 0x20) {
-            size = 16 + CUtils::Hton16(hdr.hahdr.v2.len);
+            size = 16 + CUtils::Ntoh16(hdr.hahdr.v2.len);
             if ((int32_t)m_dlen < size)
                 return 0; /* truncated or too large header */
 

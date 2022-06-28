@@ -26,11 +26,11 @@ bool CConnectionHandler::init(const int32_t fd, bufferevent_data_cb rcb, buffere
         char addrbuf[64] = { 0 };
         if (addr.ss_family == AF_INET) { // IPV4
             struct sockaddr_in* s = (struct sockaddr_in*)&addr;
-            c->m_peer_port = CUtils::Hton16(s->sin_port);
+            c->m_peer_port = CUtils::Ntoh16(s->sin_port);
             evutil_inet_ntop(AF_INET, &s->sin_addr, addrbuf, sizeof(addrbuf));
         } else { // IPV6
             struct sockaddr_in6* s = (struct sockaddr_in6*)&addr;
-            c->m_peer_port = CUtils::Hton16(s->sin6_port);
+            c->m_peer_port = CUtils::Ntoh16(s->sin6_port);
             evutil_inet_ntop(AF_INET6, &s->sin6_addr, addrbuf, sizeof(addrbuf));
         }
         c->m_peer_ip = addrbuf;
@@ -47,7 +47,15 @@ bool CConnectionHandler::init(const int32_t fd, bufferevent_data_cb rcb, buffere
 bool CConnectionHandler::Connect(std::string host, std::optional<bool> ipv6)
 {
     auto [schema, hostname, port] = CConnection::SplitUri(host);
-    CheckCondition(Init(-1), false);
+    SSL* ssl = nullptr;
+    if (schema == "https" || schema == "wss") {
+        ssl = CSSLContex::Instance().CreateOneSSL();
+        if (ssl)
+            SSL_ctrl(ssl, SSL_CTRL_SET_TLSEXT_HOSTNAME, TLSEXT_NAMETYPE_host_name, (void*)host.data());
+    }
+    CheckCondition(Init(-1, ssl), false);
+    if (ssl)
+        bufferevent_openssl_set_allow_dirty_shutdown(m_conn->m_bev, 1);
     m_conn->m_host = host;
     m_conn->SetStreamTypeBySchema(schema);
     return m_conn->Connnect(hostname, std::stoi(port), ipv6 ? false : true);
@@ -59,11 +67,11 @@ CConnectionHandler::CConnectionHandler(CReadCBFunc readcb, CCloseCBFunc closecb)
     m_close_callback = std::move(closecb);
 }
 
-bool CConnectionHandler::Init(const int32_t fd)
+bool CConnectionHandler::Init(const int32_t fd, SSL* ssl)
 {
     m_first_package = true;
     m_conn.reset(CNEW CConnection());
-    return CConnectionHandler::init(fd, OnRead, OnWrite, OnError, nullptr, fd > 0);
+    return CConnectionHandler::init(fd, onRead, onWrite, onError, ssl, fd > 0);
 }
 
 bool CConnectionHandler::SendXGameMsg(const uint16_t maincmd, const uint16_t subcmd, const std::string_view data)
@@ -117,7 +125,7 @@ int32_t CConnectionHandler::handleHeadPacket(const std::string_view data)
     return res;
 }
 
-void CConnectionHandler::OnRead(struct bufferevent* bev, void* arg)
+void CConnectionHandler::onRead(struct bufferevent* bev, void* arg)
 {
     static thread_local char* buffer = { nullptr };
     if (!buffer)
@@ -169,20 +177,23 @@ void CConnectionHandler::OnRead(struct bufferevent* bev, void* arg)
     }
 }
 
-void CConnectionHandler::OnWrite(struct bufferevent* bev, void* arg)
+void CConnectionHandler::onWrite(struct bufferevent* bev, void* arg)
 {
     CConnectionHandler* self = (CConnectionHandler*)arg;
-    if (self->m_conn->Destroy()) {
+    if (self->m_conn->IsClosing()) {
         CINFO("CTX:%s %s need to recycle %p,%ld,%p", MYARGS.CTXID.c_str(), __FUNCTION__, self->m_conn.get(), self->m_conn->Id(), bev);
         if (self->m_close_callback)
             self->m_close_callback(self);
     }
 }
 
-void CConnectionHandler::OnError(struct bufferevent* bev, short which, void* arg)
+void CConnectionHandler::onError(struct bufferevent* bev, short which, void* arg)
 {
     CConnectionHandler* self = (CConnectionHandler*)arg;
     if (which & BEV_EVENT_CONNECTED) {
+        if (self->m_connected_callback)
+            self->m_connected_callback(self);
+        return;
     } else if (which & BEV_EVENT_EOF) {
     } else if (which & BEV_EVENT_ERROR) {
     } else if (which & BEV_EVENT_TIMEOUT) {

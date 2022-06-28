@@ -22,9 +22,9 @@ public:
             tls_data = CNEW char[MAX_WATERMARK_SIZE];
         XGAMEExternalHeader* h = (XGAMEExternalHeader*)tls_data;
         uint32_t cmdid = (maincmd << 16) | subcmd;
-        h->cmdid = htonl(cmdid);
-        h->bodylen = htonl(dlen + XGAME_PACKET_HEADER_LENGTH);
-        h->seq = htonl(seq);
+        h->cmdid = CUtils::Hton32(cmdid);
+        h->bodylen = CUtils::Hton32(dlen + XGAME_PACKET_HEADER_LENGTH);
+        h->seq = CUtils::Hton32(seq);
         CheckCondition(MAX_WATERMARK_SIZE > sizeof(*h) + dlen, std::nullopt);
         if (dlen > 0)
             memcpy(h->data, data, dlen);

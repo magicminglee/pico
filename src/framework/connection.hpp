@@ -17,7 +17,7 @@ class CConnection : public CObject {
 
 public:
     enum ConnectionFlags {
-        ConnectionFlags_Destroy = 1,
+        ConnectionFlags_Closing = 1,
         ConnectionFlags_HeartBeatLost = 2,
     };
     enum class StreamType {
@@ -26,11 +26,12 @@ public:
         StreamType_Tcp = 3,
         StreamType_Udp = 4,
         StreamType_Unix = 5,
+        StreamType_HTTP2 = 6,
     };
 
     CConnection();
     ~CConnection();
-    virtual bool Destroy();
+    virtual bool IsClosing();
     virtual bool Connnect(const std::string host, const uint16_t port, bool ipv4_or_ipv6 /*ipv4 is true or ipv6*/);
     virtual bool SendCmd(const void* data, const uint32_t dlen);
     void SetFlag(const int32_t flag) { CUtils::BitSet::Set(m_flags, flag); }

@@ -40,33 +40,51 @@ enum class HttpMethod : uint32_t {
     PATCH = 1 << 8
 };
 std::optional<const char*> HttpReason(HttpStatusCode code);
-class CGlobalData {
+class CRequest {
 public:
-    CGlobalData() = default;
     void SetUid(const int64_t uid);
     std::optional<int64_t> GetUid() const;
     std::optional<std::string_view> GetQueryByKey(const char* key) const;
     std::optional<std::string_view> GetHeaderByKey(const char* key) const;
     std::optional<std::string_view> GetRequestPath() const;
     std::optional<std::string_view> GetRequestBody() const;
-    std::optional<ghttp::HttpStatusCode> GetResponseStatus() const;
-    std::optional<std::string_view> GetResponseBody() const;
 
 public:
     std::optional<evkeyvalq*> qheaders;
     std::optional<evkeyvalq*> headers;
     std::optional<std::string_view> path;
     std::optional<std::string_view> data;
+    std::optional<int64_t> uid;
+    struct evhttp_request* req = { nullptr };
+};
+
+class CResponse {
+public:
+    bool Response(const std::pair<ghttp::HttpStatusCode, std::string>& res) const;
+    void AddHeader(const std::string& key, const std::string& val);
+    evhttp_connection* Conn() { return conn; }
+    std::optional<std::string_view> GetQueryByKey(const char* key) const;
+    std::optional<std::string_view> GetHeaderByKey(const char* key) const;
+    std::optional<ghttp::HttpStatusCode> GetResponseStatus() const;
+    std::optional<std::string_view> GetResponseBody() const;
+
+public:
+    std::optional<evkeyvalq*> qheaders;
+    std::optional<evkeyvalq*> headers;
     std::optional<ghttp::HttpStatusCode> rspstatus;
     std::optional<std::string_view> rspdata;
-    std::optional<int64_t> uid;
+    struct evhttp_connection* conn = { nullptr };
+    struct evhttp_request* req = { nullptr };
 };
+
+using HttpReqRspCallback = std::function<bool(CRequest*, CResponse*)>;
+using HttpRspCallback = std::function<bool(CResponse*)>;
 }
 
 class CWebSocket {
 public:
     using Callback = std::function<bool(CWebSocket*, std::string_view)>;
-    static CWebSocket* OnVerify(evhttp_connection* evconn, Callback rdfunc);
+    static CWebSocket* Upgrade(ghttp::CResponse* rsp, Callback rdfunc);
     bool SendCmd(const CWSParser::WS_OPCODE opcode, std::string_view data);
     static bool Connect(const std::string& url, Callback cb);
 
@@ -84,13 +102,12 @@ private:
 };
 
 class CHTTPServer : public CObject {
-    typedef bool HttpCallbackType(const ghttp::CGlobalData*, evhttp_request*);
-    typedef std::optional<std::pair<ghttp::HttpStatusCode, std::string>> HttpEventType(ghttp::CGlobalData*, evhttp_request*);
+    typedef std::optional<std::pair<ghttp::HttpStatusCode, std::string>> HttpEventType(ghttp::CRequest*, ghttp::CResponse*);
 
 public:
     struct FilterData {
         ghttp::HttpMethod cmd;
-        std::function<HttpCallbackType> cb;
+        ghttp::HttpReqRspCallback cb;
         std::unordered_map<std::string, std::string> h;
         CHTTPServer* self;
     };
@@ -101,13 +118,12 @@ public:
     ~CHTTPServer();
     bool Init(std::string host);
     void ServeWs(const std::string path, CWebSocket::Callback cb);
-    bool Register(const std::string path, ghttp::HttpMethod cmd, std::function<HttpCallbackType> cb);
+    bool Register(const std::string path, ghttp::HttpMethod cmd, ghttp::HttpReqRspCallback cb);
     bool Register(const std::string path, FilterData rd);
     bool RegEvent(std::string ename, std::function<HttpEventType> cb);
-    static bool Response(evhttp_request* req, const std::pair<ghttp::HttpStatusCode, std::string>& res);
 
 private:
-    std::optional<std::pair<ghttp::HttpStatusCode, std::string>> EmitEvent(std::string ename, ghttp::CGlobalData* g, evhttp_request* req);
+    std::optional<std::pair<ghttp::HttpStatusCode, std::string>> EmitEvent(std::string ename, ghttp::CRequest* req, ghttp::CResponse* rsp);
     static bufferevent* onConnected(struct event_base*, void*);
     bool setOption(const int32_t fd);
     void destroy();
@@ -122,14 +138,13 @@ private:
 
 class CHTTPClient {
     typedef void (*HttpHandleCallbackFunc)(struct evhttp_request* req, void* arg);
-    using CallbackFuncType = std::function<void(const ghttp::CGlobalData*, evhttp_connection*)>;
 
 public:
-    static bool Get(std::string_view url, CallbackFuncType cb);
-    static bool Post(std::string_view url, CallbackFuncType cb, std::optional<std::string_view> data);
+    static bool Get(std::string_view url, ghttp::HttpRspCallback cb);
+    static bool Post(std::string_view url, ghttp::HttpRspCallback cb, std::optional<std::string_view> data);
 
     static std::optional<CHTTPClient*> Emit(std::string_view url,
-        CallbackFuncType cb,
+        ghttp::HttpRspCallback cb,
         ghttp::HttpMethod cmd = ghttp::HttpMethod::GET,
         std::optional<std::string_view> data = std::nullopt,
         std::map<std::string, std::string> headers = {});
@@ -137,7 +152,7 @@ public:
 private:
     bool request(const char* url, const uint32_t cmd, std::optional<std::string_view> data, std::optional<std::map<std::string, std::string>> headers, HttpHandleCallbackFunc cb);
     static void delegateCallback(struct evhttp_request* req, void* arg);
-    CallbackFuncType m_callback = { nullptr };
+    ghttp::HttpRspCallback m_callback = { nullptr };
     struct evhttp_connection* m_evconn = { nullptr };
 };
 

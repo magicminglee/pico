@@ -1,7 +1,5 @@
 #include "gamelibs/app.hpp"
 
-#include "framework/wsparser.hpp"
-
 #include "jwt-cpp/jwt.h"
 #include "jwt-cpp/traits/nlohmann-json/traits.h"
 
@@ -41,25 +39,25 @@ std::optional<int64_t> getNextSequenceId(const std::string& name)
 void CApp::Register(std::shared_ptr<CHTTPServer> hs)
 {
     hs->RegEvent("finish",
-        [](ghttp::CGlobalData* g, evhttp_request* req) -> std::optional<std::pair<ghttp::HttpStatusCode, std::string>> {
+        [](ghttp::CRequest* req, ghttp::CResponse* rsp) -> std::optional<std::pair<ghttp::HttpStatusCode, std::string>> {
 #ifdef _DEBUG_MODE
-            auto status = g->GetResponseStatus().value_or(ghttp::HttpStatusCode::OK);
-            auto body = std::string(g->GetResponseBody().value_or("").data(), g->GetResponseBody().value_or("").length());
+            auto status = rsp->GetResponseStatus().value_or(ghttp::HttpStatusCode::OK);
+            auto body = std::string(rsp->GetResponseBody().value_or("").data(), rsp->GetResponseBody().value_or("").length());
             CDEBUG("CTX:%s Http Response status %s body %s", MYARGS.CTXID.c_str(), ghttp::HttpReason(status).value_or(""), body.c_str());
 #endif
             return std::nullopt;
         });
     hs->RegEvent("start",
-        [](ghttp::CGlobalData* g, evhttp_request*) -> std::optional<std::pair<ghttp::HttpStatusCode, std::string>> {
-            if (g->GetRequestPath().value_or("") == "/game/v1/login") {
+        [](ghttp::CRequest* req, ghttp::CResponse* rsp) -> std::optional<std::pair<ghttp::HttpStatusCode, std::string>> {
+            if (req->GetRequestPath().value_or("") == "/game/v1/login") {
 #ifdef _DEBUG_MODE
-                auto path = std::string(g->GetRequestPath().value_or("").data(), g->GetRequestPath().value_or("").length());
-                auto body = std::string(g->GetRequestBody().value_or("").data(), g->GetRequestBody().value_or("").length());
+                auto path = std::string(req->GetRequestPath().value_or("").data(), req->GetRequestPath().value_or("").length());
+                auto body = std::string(req->GetRequestBody().value_or("").data(), req->GetRequestBody().value_or("").length());
                 CDEBUG("CTX:%s Http Request api %s body %s", MYARGS.CTXID.c_str(), path.c_str(), body.c_str());
 #endif
                 return std::nullopt;
             }
-            auto auth = g->GetHeaderByKey("Authorization");
+            auto auth = req->GetHeaderByKey("Authorization");
             if (!auth)
                 return std::optional<std::pair<ghttp::HttpStatusCode, std::string>>({ ghttp::HttpStatusCode::UNAUTHORIZED, "" });
             try {
@@ -72,13 +70,13 @@ void CApp::Register(std::shared_ptr<CHTTPServer> hs)
 
                     for (auto& e : decoded.get_payload_claims()) {
                         if (e.first == "uid")
-                            g->SetUid(e.second.as_int());
+                            req->SetUid(e.second.as_int());
                     }
-                    if (!g->GetUid())
+                    if (!req->GetUid())
                         return std::optional<std::pair<ghttp::HttpStatusCode, std::string>>({ ghttp::HttpStatusCode::UNAUTHORIZED, "No UserId" });
 #ifdef _DEBUG_MODE
-                    auto path = std::string(g->GetRequestPath().value_or("").data(), g->GetRequestPath().value_or("").length());
-                    auto body = std::string(g->GetRequestBody().value_or("").data(), g->GetRequestBody().value_or("").length());
+                    auto path = std::string(req->GetRequestPath().value_or("").data(), req->GetRequestPath().value_or("").length());
+                    auto body = std::string(req->GetRequestBody().value_or("").data(), req->GetRequestBody().value_or("").length());
                     CDEBUG("CTX:%s Http Request api %s body %s", MYARGS.CTXID.c_str(), path.c_str(), body.c_str());
 #endif
                     return std::nullopt;
@@ -91,11 +89,11 @@ void CApp::Register(std::shared_ptr<CHTTPServer> hs)
     hs->Register(
         "/game/v1/login",
         ghttp::HttpMethod::POST,
-        [hs](const ghttp::CGlobalData* g, evhttp_request* req) {
-            if (!g->GetRequestBody())
-                return hs->Response(req, { ghttp::HttpStatusCode::BADREQUEST, "Invalid Parameters" });
+        [](ghttp::CRequest* req, ghttp::CResponse* rsp) {
+            if (!req->GetRequestBody())
+                return rsp->Response({ ghttp::HttpStatusCode::BADREQUEST, "Invalid Parameters" });
             try {
-                auto j = nlohmann::json::parse(g->GetRequestBody().value());
+                auto j = nlohmann::json::parse(req->GetRequestBody().value());
 
                 auto conn = CMongo::Instance().Conn();
                 mongocxx::v_noabi::collection col = (*conn)[MYARGS.DbName[0]][MYARGS.DbColl[0][0]];
@@ -112,7 +110,7 @@ void CApp::Register(std::shared_ptr<CHTTPServer> hs)
                     result = col.find_one_and_update(query.view(), update.view(), option);
                 } catch (const std::exception& e) {
                     CERROR("CTX:%s /game/v1/login mongo exception %s", MYARGS.CTXID.c_str(), e.what());
-                    return hs->Response(req, { ghttp::HttpStatusCode::INTERNAL, "Database Exception" });
+                    return rsp->Response({ ghttp::HttpStatusCode::INTERNAL, "Database Exception" });
                 }
 
                 std::optional<int64_t> uid;
@@ -145,7 +143,7 @@ void CApp::Register(std::shared_ptr<CHTTPServer> hs)
                                 }
                             } catch (const std::exception& e) {
                                 CERROR("CTX:%s /game/v1/login mongo exception %s", MYARGS.CTXID.c_str(), e.what());
-                                return hs->Response(req, { ghttp::HttpStatusCode::INTERNAL, "Database Exception" });
+                                return rsp->Response({ ghttp::HttpStatusCode::INTERNAL, "Database Exception" });
                             }
                         }
                     }
@@ -161,26 +159,26 @@ void CApp::Register(std::shared_ptr<CHTTPServer> hs)
                     nlohmann::json js;
                     js["token"] = token;
                     js["type"] = j["type"].get<std::string>();
-                    return hs->Response(req, { ghttp::HttpStatusCode::OK, js.dump() });
+                    return rsp->Response({ ghttp::HttpStatusCode::OK, js.dump() });
                 }
             } catch (const std::exception& e) {
                 CERROR("CTX:%s /game/v1/login exception %s", MYARGS.CTXID.c_str(), e.what());
-                return hs->Response(req, { ghttp::HttpStatusCode::INTERNAL, "Database Exception" });
+                return rsp->Response({ ghttp::HttpStatusCode::INTERNAL, "Database Exception" });
             }
-            return hs->Response(req, { ghttp::HttpStatusCode::BADREQUEST, "Invalid Parameters" });
+            return rsp->Response({ ghttp::HttpStatusCode::BADREQUEST, "Invalid Parameters" });
         });
     hs->Register(
         "/game/v1/getuser",
         ghttp::HttpMethod::POST,
-        [hs](const ghttp::CGlobalData* g, evhttp_request* req) {
-            auto v = CLocalStoreage<int64_t>::Instance().Get(g->GetUid().value());
+        [](ghttp::CRequest* req, ghttp::CResponse* rsp) {
+            auto v = CLocalStoreage<int64_t>::Instance().Get(req->GetUid().value());
             if (v) {
-                return hs->Response(req, { ghttp::HttpStatusCode::OK, v.value()->data() });
+                return rsp->Response({ ghttp::HttpStatusCode::OK, v.value()->data() });
             }
             try {
                 auto conn = CMongo::Instance().Conn();
                 mongocxx::v_noabi::collection col = (*conn)[MYARGS.DbName[0]][MYARGS.DbColl[0][0]];
-                auto query = make_document(kvp("_id", bsoncxx::types::b_int64 { g->GetUid().value_or(0) }));
+                auto query = make_document(kvp("_id", bsoncxx::types::b_int64 { req->GetUid().value_or(0) }));
 
                 auto result = col.find_one(query.view());
                 nlohmann::json j;
@@ -190,71 +188,76 @@ void CApp::Register(std::shared_ptr<CHTTPServer> hs)
                         j["value"] = it->get_utf8();
                     }
                 }
-                CLocalStoreage<int64_t>::Instance().Set(g->GetUid().value(), j.dump());
-                return hs->Response(req, { ghttp::HttpStatusCode::OK, j.dump() });
+                CLocalStoreage<int64_t>::Instance().Set(req->GetUid().value(), j.dump());
+                return rsp->Response({ ghttp::HttpStatusCode::OK, j.dump() });
             } catch (const std::exception& e) {
                 CERROR("CTX:%s /game/v1/getuser mongo exception %s", MYARGS.CTXID.c_str(), e.what());
-                return hs->Response(req, { ghttp::HttpStatusCode::INTERNAL, "Database Exception" });
+                return rsp->Response({ ghttp::HttpStatusCode::INTERNAL, "Database Exception" });
             }
             return true;
         });
     hs->Register(
         "/game/v1/setuser",
         ghttp::HttpMethod::POST,
-        [hs](const ghttp::CGlobalData* g, evhttp_request* req) {
-            if (!g->GetRequestBody())
-                return hs->Response(req, { ghttp::HttpStatusCode::BADREQUEST, "Invalid Parameters" });
+        [](ghttp::CRequest* req, ghttp::CResponse* rsp) {
+            if (!req->GetRequestBody())
+                return rsp->Response({ ghttp::HttpStatusCode::BADREQUEST, "Invalid Parameters" });
             try {
-                auto j = nlohmann::json::parse(g->GetRequestBody().value());
+                auto j = nlohmann::json::parse(req->GetRequestBody().value());
                 auto conn = CMongo::Instance().Conn();
                 mongocxx::v_noabi::collection col = (*conn)[MYARGS.DbName[0]][MYARGS.DbColl[0][0]];
-                auto query = make_document(kvp("_id", bsoncxx::types::b_int64 { g->GetUid().value() }));
+                auto query = make_document(kvp("_id", bsoncxx::types::b_int64 { req->GetUid().value() }));
                 auto update = make_document(kvp("$set", make_document(kvp("value", bsoncxx::types::b_utf8 { j["value"].get<std::string>() }))));
 
                 col.update_one(query.view(), update.view());
             } catch (const std::exception& e) {
                 CERROR("CTX:%s /game/v1/setuser mongo exception %s", MYARGS.CTXID.c_str(), e.what());
-                return hs->Response(req, { ghttp::HttpStatusCode::INTERNAL, "Database Exception" });
+                return rsp->Response({ ghttp::HttpStatusCode::INTERNAL, "Database Exception" });
             }
 
-            // CRedisMgr::Instance().Handle(0)->del(std::to_string(g->GetUid().value()));
-            CLocalStoreage<int64_t>::Instance().Remove(g->GetUid().value());
+            // CRedisMgr::Instance().Handle(0)->del(std::to_string(req->GetUid().value()));
+            CLocalStoreage<int64_t>::Instance().Remove(req->GetUid().value());
             nlohmann::json js;
-            return hs->Response(req, { ghttp::HttpStatusCode::OK, js.dump() });
+            return rsp->Response({ ghttp::HttpStatusCode::OK, js.dump() });
         });
 
     hs->Register(
         "/game/v1/rpc",
         ghttp::HttpMethod::POST,
-        [hs](const ghttp::CGlobalData* g, evhttp_request* req) {
-            const auto uid = g->GetUid().value();
-            auto v = g->GetHeaderByKey("Authorization").value_or("");
+        [](ghttp::CRequest* req, ghttp::CResponse* rsp) {
+            auto v = req->GetHeaderByKey("Authorization").value_or("");
             auto auth = std::string(v.data(), v.size());
+            ghttp::CResponse r = *rsp;
             CHTTPClient::Emit("https://dev.wgnice.com:9021/game/v1/getuser",
-                [req](const ghttp::CGlobalData* g, evhttp_connection*) {
-                    if (g->data) {
-                        CHTTPServer::Response(req, { g->GetResponseStatus().value(), std::string(g->data.value().data(), g->data.value().length()) });
-                    } else {
-                        CERROR("null data");
+                [r](ghttp::CResponse* response) {
+                    if (response->GetResponseBody()) {
+                        r.Response({ response->GetResponseStatus().value(), std::string(response->GetResponseBody().value().data(), response->GetResponseBody().value().length()) });
                     }
+                    return true;
                 },
                 ghttp::HttpMethod::POST,
                 std::nullopt,
                 { { "Authorization", auth.data() } });
-            return true;
+            return false;
         });
 
-    hs->ServeWs("/game/ws", [](CWebSocket* self, std::string_view data) -> bool {
-        self->SendCmd(CWSParser::WS_OPCODE_TXTFRAME, data);
+    hs->ServeWs("/game/ws", [](CWebSocket* ws, std::string_view data) {
+        std::string d(data.data(), data.length());
+        CINFO("websocket on data %s", d.c_str());
+        ws->SendCmd(CWSParser::WS_OPCODE_TXTFRAME, data);
         return true;
     });
 
     hs->Register(
         "/game/wscli",
         ghttp::HttpMethod::POST,
-        [hs](const ghttp::CGlobalData* g, evhttp_request* req) {
+        [](ghttp::CRequest* req, ghttp::CResponse* rsp) {
             std::string url = "wss://access.indigames.in:9028";
-            CWebSocket::Connect(url, [](CWebSocket*, std::string_view data) -> bool { return true; });
-            return hs->Response(req, { ghttp::HttpStatusCode::OK, "OK" });
+            CWebSocket::Connect(url, [](CWebSocket*, std::string_view data) {
+                std::string d(data.data(), data.length());
+                CINFO("websocket on data %s", d.c_str());
+                return true;
+            });
+            return rsp->Response({ ghttp::HttpStatusCode::OK, "OK" });
         });
 }

@@ -228,18 +228,25 @@ static const std::map<ghttp::HttpStatusCode, std::string> RESPSTR = {
 };
 
 namespace ghttp {
+std::optional<const char*> HttpReason(ghttp::HttpStatusCode code)
+{
+    if (auto it = RESPSTR.find(code); it != std::end(RESPSTR))
+        return std::optional<const char*>(it->second.c_str());
 
-void CGlobalData::SetUid(const int64_t uid)
+    return std::nullopt;
+}
+
+void CRequest::SetUid(const int64_t uid)
 {
     this->uid = uid;
 }
 
-std::optional<int64_t> CGlobalData::GetUid() const
+std::optional<int64_t> CRequest::GetUid() const
 {
     return uid;
 }
 
-std::optional<std::string_view> CGlobalData::GetQueryByKey(const char* key) const
+std::optional<std::string_view> CRequest::GetQueryByKey(const char* key) const
 {
     if (!key || !qheaders)
         return std::nullopt;
@@ -247,7 +254,7 @@ std::optional<std::string_view> CGlobalData::GetQueryByKey(const char* key) cons
     return val ? std::optional(val) : std::nullopt;
 }
 
-std::optional<std::string_view> CGlobalData::GetHeaderByKey(const char* key) const
+std::optional<std::string_view> CRequest::GetHeaderByKey(const char* key) const
 {
     if (!key || !headers)
         return std::nullopt;
@@ -255,32 +262,58 @@ std::optional<std::string_view> CGlobalData::GetHeaderByKey(const char* key) con
     return val ? std::optional(val) : std::nullopt;
 }
 
-std::optional<std::string_view> CGlobalData::GetRequestPath() const
+std::optional<std::string_view> CRequest::GetRequestPath() const
 {
     return path;
 }
 
-std::optional<std::string_view> CGlobalData::GetRequestBody() const
+std::optional<std::string_view> CRequest::GetRequestBody() const
 {
     return data;
 }
 
-std::optional<ghttp::HttpStatusCode> CGlobalData::GetResponseStatus() const
+///////////////////////////////////////////////////////////////CResponse////////////////////////////////////////////////////////
+std::optional<std::string_view> CResponse::GetQueryByKey(const char* key) const
+{
+    if (!key || !qheaders)
+        return std::nullopt;
+    auto val = evhttp_find_header(qheaders.value(), key);
+    return val ? std::optional(val) : std::nullopt;
+}
+
+std::optional<std::string_view> CResponse::GetHeaderByKey(const char* key) const
+{
+    if (!key || !headers)
+        return std::nullopt;
+    auto val = evhttp_find_header(headers.value(), key);
+    return val ? std::optional(val) : std::nullopt;
+}
+
+std::optional<ghttp::HttpStatusCode> CResponse::GetResponseStatus() const
 {
     return rspstatus;
 }
 
-std::optional<std::string_view> CGlobalData::GetResponseBody() const
+std::optional<std::string_view> CResponse::GetResponseBody() const
 {
     return rspdata;
 }
 
-std::optional<const char*> HttpReason(ghttp::HttpStatusCode code)
+bool CResponse::Response(const std::pair<ghttp::HttpStatusCode, std::string>& res) const
 {
-    if (auto it = RESPSTR.find(code); it != std::end(RESPSTR))
-        return std::optional<const char*>(it->second.c_str());
+    auto evb = evbuffer_new();
+    evbuffer_add(evb, res.second.data(), res.second.length());
 
-    return std::nullopt;
+    evhttp_send_reply(req, (int32_t)res.first, ghttp::HttpReason(res.first).value_or(""), evb);
+
+    if (evb)
+        evbuffer_free(evb);
+    return true;
+}
+
+void CResponse::AddHeader(const std::string& key, const std::string& val)
+{
+    evhttp_add_header(evhttp_request_get_output_headers(req), key.c_str(), val.c_str());
 }
 
 }
@@ -305,18 +338,6 @@ void CHTTPServer::destroy()
 struct bufferevent* CHTTPServer::onConnected(struct event_base* base, void* arg)
 {
     return CWorker::MAIN_CONTEX->Bvsocket(-1, nullptr, nullptr, nullptr, nullptr, *((bool*)arg) ? CSSLContex::Instance().CreateOneSSL() : nullptr, true);
-}
-
-bool CHTTPServer::Response(evhttp_request* req, const std::pair<ghttp::HttpStatusCode, std::string>& res)
-{
-    auto evb = evbuffer_new();
-    evbuffer_add(evb, res.second.data(), res.second.length());
-
-    evhttp_send_reply(req, (int32_t)res.first, ghttp::HttpReason(res.first).value_or(""), evb);
-
-    if (evb)
-        evbuffer_free(evb);
-    return true;
 }
 
 static void onDefault(struct evhttp_request* req, void* arg)
@@ -416,12 +437,16 @@ void CHTTPServer::onBindCallback(evhttp_request* req, void* arg)
         char* data = (char*)evbuffer_pullup(buf, -1);
         int32_t dlen = evbuffer_get_length(buf);
 
-        ghttp::CGlobalData g;
-        g.qheaders = &qheaders;
-        g.headers = headers;
-        g.path = std::string_view(path);
-        g.data = std::string_view(data, dlen);
-        auto r = filters->self->EmitEvent("start", &g, req);
+        ghttp::CRequest request;
+        request.req = req;
+        request.qheaders = &qheaders;
+        request.headers = headers;
+        request.path = std::string_view(path);
+        request.data = std::string_view(data, dlen);
+        ghttp::CResponse rsp;
+        rsp.req = req;
+        rsp.conn = evhttp_request_get_connection(req);
+        auto r = filters->self->EmitEvent("start", &request, &rsp);
         if (r) {
             evhttp_send_reply(req, (int32_t)r.value().first, ghttp::HttpReason(r.value().first).value_or(""), nullptr);
             return;
@@ -449,10 +474,10 @@ void CHTTPServer::onBindCallback(evhttp_request* req, void* arg)
             evhttp_add_header(evhttp_request_get_output_headers(req), k.c_str(), v.c_str());
         }
 
-        auto res = filters->cb(&g, req);
+        auto res = filters->cb(&request, &rsp);
 
         if (res) {
-            filters->self->EmitEvent("finish", &g, req);
+            filters->self->EmitEvent("finish", &request, &rsp);
         }
 
         return;
@@ -466,19 +491,19 @@ void CHTTPServer::ServeWs(const std::string path, CWebSocket::Callback cb)
     Register(
         path,
         ghttp::HttpMethod::GET,
-        [this, cb](const ghttp::CGlobalData* g, evhttp_request* req) {
-            evhttp_add_header(evhttp_request_get_output_headers(req), "Connection", "upgrade");
-            auto v = g->GetHeaderByKey("sec-websocket-key");
+        [cb](const ghttp::CRequest* req, ghttp::CResponse* rsp) {
+            auto v = req->GetHeaderByKey("sec-websocket-key");
             if (v) {
                 std::string swsk(v.value().data(), v.value().length());
                 swsk = CWSParser::GenSecWebSocketAccept(swsk);
-                evhttp_add_header(evhttp_request_get_output_headers(req), "Sec-WebSocket-Accept", swsk.c_str());
-                evhttp_add_header(evhttp_request_get_output_headers(req), "Upgrade", "websocket");
-                this->Response(req, { ghttp::HttpStatusCode::SWITCH, "" });
-                CWebSocket::OnVerify(evhttp_request_get_connection(req), cb);
+                rsp->AddHeader("Connection", "upgrade");
+                rsp->AddHeader("Sec-WebSocket-Accept", swsk);
+                rsp->AddHeader("Upgrade", "websocket");
+                rsp->Response({ ghttp::HttpStatusCode::SWITCH, "" });
+                CWebSocket::Upgrade(rsp, cb);
                 return true;
             }
-            return this->Response(req, { ghttp::HttpStatusCode::FORBIDDEN, "" });
+            return rsp->Response({ ghttp::HttpStatusCode::FORBIDDEN, "" });
         });
 }
 
@@ -490,7 +515,7 @@ bool CHTTPServer::Register(const std::string path, FilterData filter)
     return true;
 }
 
-bool CHTTPServer::Register(const std::string path, ghttp::HttpMethod cmd, std::function<HttpCallbackType> cb)
+bool CHTTPServer::Register(const std::string path, ghttp::HttpMethod cmd, ghttp::HttpReqRspCallback cb)
 {
     FilterData filter = { .cmd = cmd, .cb = cb, .self = this };
     return Register(path, filter);
@@ -502,10 +527,10 @@ bool CHTTPServer::RegEvent(std::string ename, std::function<HttpEventType> cb)
     return true;
 }
 
-std::optional<std::pair<ghttp::HttpStatusCode, std::string>> CHTTPServer::EmitEvent(std::string ename, ghttp::CGlobalData* g, evhttp_request* req)
+std::optional<std::pair<ghttp::HttpStatusCode, std::string>> CHTTPServer::EmitEvent(std::string ename, ghttp::CRequest* req, ghttp::CResponse* rsp)
 {
     if (auto it = m_ev_callbacks.find(ename); it != std::end(m_ev_callbacks)) {
-        return (it->second)(g, req);
+        return (it->second)(req, rsp);
     }
     return std::nullopt;
 }
@@ -595,18 +620,18 @@ bool CHTTPServer::setOption(const int32_t fd)
 }
 
 ///////////////////////////////////////////////////////////////CHTTPClient/////////////////////////////////////////////////////////////////////////
-bool CHTTPClient::Get(std::string_view url, CallbackFuncType cb)
+bool CHTTPClient::Get(std::string_view url, ghttp::HttpRspCallback cb)
 {
     return (bool)Emit(url, cb, ghttp::HttpMethod::GET, std::nullopt);
 }
 
-bool CHTTPClient::Post(std::string_view url, CallbackFuncType cb, std::optional<std::string_view> data)
+bool CHTTPClient::Post(std::string_view url, ghttp::HttpRspCallback cb, std::optional<std::string_view> data)
 {
     return (bool)Emit(url, cb, ghttp::HttpMethod::POST, data);
 }
 
 std::optional<CHTTPClient*> CHTTPClient::Emit(std::string_view url,
-    CallbackFuncType cb,
+    ghttp::HttpRspCallback cb,
     ghttp::HttpMethod cmd,
     std::optional<std::string_view> data,
     std::map<std::string, std::string> headers)
@@ -625,31 +650,28 @@ std::optional<CHTTPClient*> CHTTPClient::Emit(std::string_view url,
 void CHTTPClient::delegateCallback(struct evhttp_request* req, void* arg)
 {
     CHTTPClient* self = (CHTTPClient*)arg;
-    ghttp::CGlobalData g;
-    g.rspstatus = ghttp::HttpStatusCode::BADREQUEST;
-    g.data = ghttp::HttpReason(ghttp::HttpStatusCode::BADREQUEST).value_or("");
+    ghttp::CResponse rsp;
+    rsp.req = req;
+    rsp.conn = self->m_evconn;
+    rsp.rspstatus = ghttp::HttpStatusCode::BADREQUEST;
+    rsp.rspdata = ghttp::HttpReason(ghttp::HttpStatusCode::BADREQUEST).value_or("");
     while (req) {
         // decode headers
         auto headers = evhttp_request_get_input_headers(req);
-        auto path = evhttp_request_get_uri(req);
-        if (!path) {
-            break;
-        }
         // decode the payload
         struct evbuffer* buf = evhttp_request_get_input_buffer(req);
         char* data = (char*)evbuffer_pullup(buf, -1);
         auto dlen = evbuffer_get_length(buf);
 
-        g.headers = headers;
-        g.path = std::string_view(path);
-        g.rspstatus = ghttp::HttpStatusCode(evhttp_request_get_response_code(req));
+        rsp.headers = headers;
+        rsp.rspstatus = ghttp::HttpStatusCode(evhttp_request_get_response_code(req));
         if (data)
-            g.data = std::string_view(data, dlen);
+            rsp.rspdata = std::string_view(data, dlen);
         break;
     }
 
     if (self->m_callback)
-        self->m_callback(&g, self->m_evconn);
+        self->m_callback(&rsp);
     CDEL(self);
 }
 
@@ -786,8 +808,9 @@ CLEANUPLABLE:
 }
 
 /////////////////////////////////////////////////////////////////////////CWebSocket/////////////////////////////////////////////////////////////
-CWebSocket* CWebSocket::OnVerify(evhttp_connection* evconn, Callback rdfunc)
+CWebSocket* CWebSocket::Upgrade(ghttp::CResponse* rsp, Callback rdfunc)
 {
+    auto evconn = rsp->Conn();
     if (!evconn)
         return nullptr;
     auto ws = CNEW CWebSocket(evconn);
@@ -796,7 +819,7 @@ CWebSocket* CWebSocket::OnVerify(evhttp_connection* evconn, Callback rdfunc)
     }
     ws->m_rdfunc = std::move(rdfunc);
     ws->m_parser.SetStatus(CWSParser::WS_STATUS::WS_CONNECTED);
-    CINFO("OnVerify");
+    CINFO("CWebSocket::Upgrade");
     return ws;
 }
 
@@ -819,14 +842,16 @@ bool CWebSocket::Connect(const std::string& url, Callback cb)
     auto key = CWSParser::GenSecWebSocketAccept(std::to_string(time(nullptr)));
     return (bool)CHTTPClient::Emit(
         url,
-        [key, cb](const ghttp::CGlobalData* g, evhttp_connection* evconn) {
-            auto seckey = g->GetHeaderByKey("sec-websocket-accept");
+        [key, cb](ghttp::CResponse* rsp) {
+            auto seckey = rsp->GetHeaderByKey("sec-websocket-accept");
             if (seckey) {
                 auto sk = std::string(seckey.value().data(), seckey.value().length());
                 if (sk == CWSParser::GenSecWebSocketAccept(key)) {
-                    CWebSocket::OnVerify(evconn, cb);
+                    CWebSocket::Upgrade(rsp, cb);
+                    return true;
                 }
             }
+            return false;
         },
         ghttp::HttpMethod::GET,
         std::nullopt,
