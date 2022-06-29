@@ -29,7 +29,7 @@ void CTCPServer::destroy()
     }
 }
 
-bool CTCPServer::Init(std::string host, std::function<void(const int32_t)> cb)
+bool CTCPServer::ListenAndServe(std::string host, std::function<void(const int32_t)> cb)
 {
     CheckCondition(!host.empty(), true);
     if (-1 != m_listenfd)
@@ -67,8 +67,6 @@ bool CTCPServer::Init(std::string host, std::function<void(const int32_t)> cb)
         return false;
     }
 
-    freeaddrinfo(result);
-
     if (::bind(m_listenfd, rp->ai_addr, rp->ai_addrlen) < 0) {
         destroy();
         return false;
@@ -76,6 +74,7 @@ bool CTCPServer::Init(std::string host, std::function<void(const int32_t)> cb)
 
     if (::listen(m_listenfd, BACKLOG_SIZE) < 0) {
         destroy();
+        freeaddrinfo(result);
         return false;
     }
 
@@ -90,8 +89,10 @@ bool CTCPServer::Init(std::string host, std::function<void(const int32_t)> cb)
             });
         !m_ev) {
         destroy();
+        freeaddrinfo(result);
         return false;
     }
+    freeaddrinfo(result);
 
     return true;
 }

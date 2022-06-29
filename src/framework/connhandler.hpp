@@ -6,14 +6,13 @@
 
 NAMESPACE_FRAMEWORK_BEGIN
 
-using CReadCBFunc = std::function<bool(const int64_t, CConnectionHandler*, std::string_view)>;
-using CConnectedCBFunc = std::function<void(CConnectionHandler*)>;
-using CCloseCBFunc = std::function<void(CConnectionHandler*)>;
+using CReadCBFunc = std::function<bool(std::string_view)>;
+using CConnectedCBFunc = std::function<void()>;
+using CCloseCBFunc = std::function<void()>;
 
 class CConnectionHandler : public CObject {
 private:
     bool m_first_package = { true };
-    std::unordered_map<std::string, std::string> m_http_headers;
     CConnectedCBFunc m_connected_callback = { nullptr };
     CReadCBFunc m_read_callback = { nullptr };
     CCloseCBFunc m_close_callback = { nullptr };
@@ -23,9 +22,10 @@ private:
     bool init(const int32_t fd, bufferevent_data_cb rcb, bufferevent_data_cb wcb, bufferevent_event_cb ecb, SSL* ssl, bool accept);
 
 public:
-    CConnectionHandler(CReadCBFunc readcb, CCloseCBFunc closecb);
+    CConnectionHandler() = default;
     ~CConnectionHandler() = default;
-    bool Init(const int32_t fd, SSL* ssl);
+    void Register(CReadCBFunc readcb, CCloseCBFunc closecb, CConnectedCBFunc connectcb);
+    bool Init(const int32_t fd, const std::string host);
     bool Connect(std::string host, std::optional<bool> ipv6 = std::nullopt);
     CConnection* Connection() { return m_conn.get(); }
     bool SendXGameMsg(const uint16_t maincmd, const uint16_t subcmd, const std::string_view data);

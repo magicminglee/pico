@@ -47,30 +47,29 @@ bool CConnectionHandler::init(const int32_t fd, bufferevent_data_cb rcb, buffere
 bool CConnectionHandler::Connect(std::string host, std::optional<bool> ipv6)
 {
     auto [schema, hostname, port] = CConnection::SplitUri(host);
-    SSL* ssl = nullptr;
-    if (schema == "https" || schema == "wss") {
-        ssl = CSSLContex::Instance().CreateOneSSL();
-        if (ssl)
-            SSL_ctrl(ssl, SSL_CTRL_SET_TLSEXT_HOSTNAME, TLSEXT_NAMETYPE_host_name, (void*)host.data());
-    }
-    CheckCondition(Init(-1, ssl), false);
-    if (ssl)
-        bufferevent_openssl_set_allow_dirty_shutdown(m_conn->m_bev, 1);
+    CheckCondition(Init(-1, host), false);
     m_conn->m_host = host;
     m_conn->SetStreamTypeBySchema(schema);
     return m_conn->Connnect(hostname, std::stoi(port), ipv6 ? false : true);
 }
 
-CConnectionHandler::CConnectionHandler(CReadCBFunc readcb, CCloseCBFunc closecb)
+void CConnectionHandler::Register(CReadCBFunc readcb, CCloseCBFunc closecb, CConnectedCBFunc connectcb)
 {
-    m_read_callback = std::move(readcb);
-    m_close_callback = std::move(closecb);
+    m_read_callback = readcb;
+    m_close_callback = closecb;
+    m_connected_callback = connectcb;
 }
 
-bool CConnectionHandler::Init(const int32_t fd, SSL* ssl)
+bool CConnectionHandler::Init(const int32_t fd, const std::string host)
 {
+    auto [schema, hostname, port] = CConnection::SplitUri(host);
+    SSL* ssl = nullptr;
+    if (schema == "https" || schema == "wss") {
+        ssl = CSSLContex::Instance().CreateOneSSL();
+    }
     m_first_package = true;
     m_conn.reset(CNEW CConnection());
+    m_conn->SetStreamTypeBySchema(schema);
     return CConnectionHandler::init(fd, onRead, onWrite, onError, ssl, fd > 0);
 }
 
@@ -136,7 +135,7 @@ void CConnectionHandler::onRead(struct bufferevent* bev, void* arg)
     if (len <= 0 || len >= MAX_WATERMARK_SIZE) {
         CERROR("%p,%ld Buffer is overflow!", self, self->Connection()->Id());
         if (self->m_close_callback)
-            self->m_close_callback(self);
+            self->m_close_callback();
         return;
     }
     while (len > 0 && len < MAX_WATERMARK_SIZE) {
@@ -161,17 +160,20 @@ void CConnectionHandler::onRead(struct bufferevent* bev, void* arg)
 
         if (self->m_conn->IsStreamType(CConnection::StreamType::StreamType_Tcp)
             || self->m_conn->IsStreamType(CConnection::StreamType::StreamType_Unix)
+            || self->m_conn->IsStreamType(CConnection::StreamType::StreamType_HTTPS)
             || self->m_conn->IsStreamType(CConnection::StreamType::StreamType_Udp)) {
             if (self->m_read_callback) {
                 auto data = (char*)evbuffer_pullup(input, -1);
                 auto dlen = evbuffer_get_length(input);
                 std::string_view sv(data, dlen);
-                self->m_read_callback(0, self, sv);
+                self->m_read_callback(sv);
+                evbuffer_drain(input, dlen);
+                len = evbuffer_get_length(input);
             }
         } else {
             CERROR("CTX:%s %ld %lu not supported socket protocol type", MYARGS.CTXID.c_str(), self->Id(), len);
             if (self->m_close_callback)
-                self->m_close_callback(self);
+                self->m_close_callback();
             break;
         }
     }
@@ -183,7 +185,7 @@ void CConnectionHandler::onWrite(struct bufferevent* bev, void* arg)
     if (self->m_conn->IsClosing()) {
         CINFO("CTX:%s %s need to recycle %p,%ld,%p", MYARGS.CTXID.c_str(), __FUNCTION__, self->m_conn.get(), self->m_conn->Id(), bev);
         if (self->m_close_callback)
-            self->m_close_callback(self);
+            self->m_close_callback();
     }
 }
 
@@ -192,7 +194,7 @@ void CConnectionHandler::onError(struct bufferevent* bev, short which, void* arg
     CConnectionHandler* self = (CConnectionHandler*)arg;
     if (which & BEV_EVENT_CONNECTED) {
         if (self->m_connected_callback)
-            self->m_connected_callback(self);
+            self->m_connected_callback();
         return;
     } else if (which & BEV_EVENT_EOF) {
     } else if (which & BEV_EVENT_ERROR) {
@@ -200,7 +202,7 @@ void CConnectionHandler::onError(struct bufferevent* bev, short which, void* arg
     }
     CINFO("CTX:%s %s %p,%ld,0x%x,%p", MYARGS.CTXID.c_str(), __FUNCTION__, self->m_conn.get(), self->m_conn->Id(), which, bev);
     if (self->m_close_callback)
-        self->m_close_callback(self);
+        self->m_close_callback();
 }
 
 NAMESPACE_FRAMEWORK_END

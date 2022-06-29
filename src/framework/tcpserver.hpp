@@ -11,7 +11,7 @@ public:
     CTCPServer() = default;
     CTCPServer(CTCPServer&&);
     ~CTCPServer();
-    bool Init(std::string host, std::function<void(const int32_t)> cb);
+    bool ListenAndServe(std::string host, std::function<void(const int32_t)> cb);
 
 private:
     bool setOption();

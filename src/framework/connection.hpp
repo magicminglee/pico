@@ -26,7 +26,7 @@ public:
         StreamType_Tcp = 3,
         StreamType_Udp = 4,
         StreamType_Unix = 5,
-        StreamType_HTTP2 = 6,
+        StreamType_HTTPS = 6,//只支持HTTP2 OVER TLS
     };
 
     CConnection();
@@ -49,8 +49,9 @@ public:
     const std::string& Host() { return m_host; }
     const std::string& Schema() { return m_schema; }
     static auto SplitUri(const std::string& uri) -> std::tuple<std::string, std::string, std::string>;
-    static std::string GetRealSchema(const std::string& schema);
+    static std::tuple<std::string, std::string> GetRealUri(const std::string& uri);
     void ShellProxy();
+    bufferevent* GetBufEvent() { return m_bev; }
 
     bool SendXGameMsg(const uint16_t maincmd, const uint16_t subcmd, const std::string_view data);
     bool ForwardMsg(const uint16_t maincmd, const uint16_t subcmd, const std::string_view data, const int64_t linkid = 0);

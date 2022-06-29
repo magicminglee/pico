@@ -31,6 +31,7 @@ using namespace gamelibs::mongo;
 class CApp {
     class AppWorker final : public CWorker {
         std::vector<std::shared_ptr<CHTTPServer>> m_http_server;
+        std::vector<std::shared_ptr<CTCPServer>> m_tcp_server;
 
     public:
         virtual bool Init() final
@@ -53,8 +54,8 @@ class CApp {
                                 XLOG::INFO_W.UpdateLogLevel(XLOG::LogWriter::LogStrToLogLevel(MYARGS.LogLevel.value()));
                                 XLOG::DBLOG_W.UpdateLogLevel(XLOG::LogWriter::LogStrToLogLevel(MYARGS.LogLevel.value()));
                             }
-                            if (j.contains("certificatefile") && j["certificatefile"].is_string()
-                                && j.contains("privatekeyfile") && j["privatekeyfile"].is_string()) {
+                            if ((j.contains("certificatefile") && j["certificatefile"].is_string()
+                                    && j.contains("privatekeyfile") && j["privatekeyfile"].is_string())) {
                                 MYARGS.CertificateFile = j["certificatefile"].get<std::string>();
                                 MYARGS.PrivateKeyFile = j["privatekeyfile"].get<std::string>();
                                 CSSLContex::Instance().LoadCertificateAndPrivateKey(MYARGS.CertificateFile.value(), MYARGS.PrivateKeyFile.value());
@@ -73,6 +74,8 @@ class CApp {
                                 MYARGS.TokenExpire = j["tokenexpire"].get<uint32_t>();
                             if (j.contains("redisttl") && j["redisttl"].is_number_unsigned())
                                 MYARGS.RedisTTL = j["redisttl"].get<uint64_t>();
+                            if (j.contains("http2able") && j["http2able"].is_boolean())
+                                MYARGS.Http2Able = j["http2able"].get<bool>();
                         }
                         CINFO("CTX:%s reload config %s", MYARGS.CTXID.c_str(), j.dump().c_str());
                     } catch (const nlohmann::json::exception& e) {
@@ -91,16 +94,19 @@ class CApp {
             }
 
             for (auto& v : MYARGS.Workers[Id()].Host) {
-                auto [schema, hostname, port] = CConnection::SplitUri(v);
-                auto schem = CConnection::GetRealSchema(schema);
-                if (schem == "http" || schem == "https") {
+                auto [schema, url] = CConnection::GetRealUri(v);
+                if (schema == "http" || schema == "https") {
                     m_http_server.push_back(std::make_shared<CHTTPServer>());
                     auto ref = m_http_server.back();
                     if (!ref->Init(v)) {
                         CERROR("CTX:%s HttpServer::Init %s", MYARGS.CTXID.c_str(), v.c_str());
                         continue;
                     }
-                    CApp::Register(ref);
+                    CApp::WebRegister(ref);
+                } else if (schema == "tcp") {
+                    m_tcp_server.push_back(std::make_shared<CTCPServer>());
+                    auto ref = m_tcp_server.back();
+                    CApp::TcpRegister(url, ref);
                 }
             }
 
@@ -148,7 +154,8 @@ public:
     }
 
     static bool Init() { return true; }
-    static void Register(std::shared_ptr<CHTTPServer> hs);
+    static void WebRegister(std::shared_ptr<CHTTPServer> srv);
+    static void TcpRegister(const std::string host, std::shared_ptr<CTCPServer> srv);
 };
 
 NAMESPACE_FRAMEWORK_END

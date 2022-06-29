@@ -36,7 +36,7 @@ std::optional<int64_t> getNextSequenceId(const std::string& name)
     return std::nullopt;
 }
 
-void CApp::Register(std::shared_ptr<CHTTPServer> hs)
+void CApp::WebRegister(std::shared_ptr<CHTTPServer> hs)
 {
     hs->RegEvent("finish",
         [](ghttp::CRequest* req, ghttp::CResponse* rsp) -> std::optional<std::pair<ghttp::HttpStatusCode, std::string>> {
@@ -260,4 +260,30 @@ void CApp::Register(std::shared_ptr<CHTTPServer> hs)
             });
             return rsp->Response({ ghttp::HttpStatusCode::OK, "OK" });
         });
+}
+
+void CApp::TcpRegister(const std::string host, std::shared_ptr<CTCPServer> hs)
+{
+    hs->ListenAndServe(host, [host](const int32_t fd) {
+        CConnectionHandler* h = CNEW CConnectionHandler();
+        h->Register(
+            [h](std::string_view) { return true; },
+            [h]() {
+                CINFO("closed");
+            },
+            [h]() {
+                CINFO("%s has been connected", h->Connection()->PeerIp());
+                const unsigned char* alpn = nullptr;
+                unsigned int alpnlen = 0;
+                auto bv = h->Connection()->GetBufEvent();
+                auto ssl = bufferevent_openssl_get_ssl(bv);
+                if (!alpn) {
+                    SSL_get0_alpn_selected(ssl, &alpn, &alpnlen);
+                }
+                if (!alpn || alpnlen != 2 || memcmp("h2", alpn, 2) != 0) {
+                    CERROR("%s h2 is not negotiated", h->Connection()->PeerIp());
+                }
+            });
+        h->Init(fd, host);
+    });
 }

@@ -90,6 +90,9 @@ bool CArgument::ParseYaml()
     if (config["main"] && config["main"].IsMap() && config["main"]["alloworigin"]) {
         IsAllowOrigin = config["main"]["alloworigin"].as<bool>();
     }
+    if (config["main"] && config["main"].IsMap() && config["main"]["http2able"]) {
+        Http2Able = config["main"]["http2able"].as<bool>();
+    }
     if (config["main"] && config["main"].IsMap() && config["main"]["modulename"]) {
         ModuleName = config["main"]["modulename"].as<std::string>();
     }
@@ -178,6 +181,8 @@ bool CArgument::ParseYaml()
         j["tokenexpire"] = TokenExpire.value();
     if (RedisTTL)
         j["redisttl"] = RedisTTL.value();
+    if (Http2Able)
+        j["http2able"] = Http2Able.value();
     auto a = nlohmann::json::array();
     for (auto&& v : Workers) {
         std::vector<std::string> hosts;

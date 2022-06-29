@@ -30,6 +30,7 @@ public:
     std::optional<std::string> CertificateFile;
     std::optional<std::string> PrivateKeyFile;
     std::optional<bool> IsAllowOrigin;
+    std::optional<bool> Http2Able;
     std::optional<std::string> ConfHost;
     std::vector<Worker> Workers;
     std::vector<std::string> RouteConf;

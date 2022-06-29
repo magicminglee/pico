@@ -34,13 +34,15 @@ auto CConnection::SplitUri(const std::string& uri)
     return std::make_tuple(type, hostname, uri.substr(pos + 1));
 }
 
-std::string CConnection::GetRealSchema(const std::string& schema)
+std::tuple<std::string, std::string> CConnection::GetRealUri(const std::string& uri)
 {
-    auto rs = schema;
-    if (auto pos = schema.find("->"); pos != std::string::npos) {
-        rs = schema.substr(pos + 2, schema.size() - (pos + 2));
+    auto [s, host, port] = CConnection::SplitUri(uri);
+    std::string schema = s, url = uri;
+    if (auto pos = uri.find("->"); pos != std::string::npos) {
+        schema = uri.substr(0, pos);
+        url = uri.substr(pos + 2, schema.size() - (pos + 2));
     }
-    return rs;
+    return std::make_tuple(schema, url);
 }
 
 void CConnection::SetStreamTypeBySchema(const std::string& schema)
@@ -51,12 +53,9 @@ void CConnection::SetStreamTypeBySchema(const std::string& schema)
         { "tcp", StreamType::StreamType_Tcp },
         { "udp", StreamType::StreamType_Udp },
         { "unix", StreamType::StreamType_Unix },
-        { "http2", StreamType::StreamType_HTTP2 },
+        { "https", StreamType::StreamType_HTTPS },
     };
-    if (auto pos = schema.find("->"); pos != std::string::npos)
-        m_schema = schema.substr(0, pos);
-    else
-        m_schema = schema;
+    m_schema = schema;
     m_st = STREAMMAP[m_schema];
 }
 
