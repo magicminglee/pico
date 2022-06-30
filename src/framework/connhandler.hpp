@@ -6,19 +6,17 @@
 
 NAMESPACE_FRAMEWORK_BEGIN
 
-using CReadCBFunc = std::function<bool(std::string_view)>;
+using CReadCBFunc = std::function<size_t(std::string_view)>;
 using CConnectedCBFunc = std::function<void()>;
 using CCloseCBFunc = std::function<void()>;
 
 class CConnectionHandler : public CObject {
 private:
-    bool m_first_package = { true };
     CConnectedCBFunc m_connected_callback = { nullptr };
     CReadCBFunc m_read_callback = { nullptr };
     CCloseCBFunc m_close_callback = { nullptr };
     std::unique_ptr<CConnection> m_conn = { nullptr };
 
-    int32_t handleHeadPacket(const std::string_view data);
     bool init(const int32_t fd, bufferevent_data_cb rcb, bufferevent_data_cb wcb, bufferevent_event_cb ecb, SSL* ssl, bool accept);
 
 public:
@@ -34,6 +32,9 @@ public:
     static void onRead(struct bufferevent* bev, void* arg);
     static void onWrite(struct bufferevent* bev, void* arg);
     static void onError(struct bufferevent* bev, short which, void* arg);
+
+    // debug
+    void* H2Session = { nullptr };
 };
 
 NAMESPACE_FRAMEWORK_END

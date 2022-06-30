@@ -36,9 +36,9 @@ std::optional<int64_t> getNextSequenceId(const std::string& name)
     return std::nullopt;
 }
 
-void CApp::WebRegister(std::shared_ptr<CHTTPServer> hs)
+void CApp::WebRegister(std::shared_ptr<CHTTPServer> srv)
 {
-    hs->RegEvent("finish",
+    srv->RegEvent("finish",
         [](ghttp::CRequest* req, ghttp::CResponse* rsp) -> std::optional<std::pair<ghttp::HttpStatusCode, std::string>> {
 #ifdef _DEBUG_MODE
             auto status = rsp->GetResponseStatus().value_or(ghttp::HttpStatusCode::OK);
@@ -47,7 +47,7 @@ void CApp::WebRegister(std::shared_ptr<CHTTPServer> hs)
 #endif
             return std::nullopt;
         });
-    hs->RegEvent("start",
+    srv->RegEvent("start",
         [](ghttp::CRequest* req, ghttp::CResponse* rsp) -> std::optional<std::pair<ghttp::HttpStatusCode, std::string>> {
             if (req->GetRequestPath().value_or("") == "/game/v1/login") {
 #ifdef _DEBUG_MODE
@@ -86,7 +86,7 @@ void CApp::WebRegister(std::shared_ptr<CHTTPServer> hs)
             }
             return std::optional<std::pair<ghttp::HttpStatusCode, std::string>>({ ghttp::HttpStatusCode::UNAUTHORIZED, "" });
         });
-    hs->Register(
+    srv->Register(
         "/game/v1/login",
         ghttp::HttpMethod::POST,
         [](ghttp::CRequest* req, ghttp::CResponse* rsp) {
@@ -167,7 +167,7 @@ void CApp::WebRegister(std::shared_ptr<CHTTPServer> hs)
             }
             return rsp->Response({ ghttp::HttpStatusCode::BADREQUEST, "Invalid Parameters" });
         });
-    hs->Register(
+    srv->Register(
         "/game/v1/getuser",
         ghttp::HttpMethod::POST,
         [](ghttp::CRequest* req, ghttp::CResponse* rsp) {
@@ -196,7 +196,7 @@ void CApp::WebRegister(std::shared_ptr<CHTTPServer> hs)
             }
             return true;
         });
-    hs->Register(
+    srv->Register(
         "/game/v1/setuser",
         ghttp::HttpMethod::POST,
         [](ghttp::CRequest* req, ghttp::CResponse* rsp) {
@@ -221,7 +221,7 @@ void CApp::WebRegister(std::shared_ptr<CHTTPServer> hs)
             return rsp->Response({ ghttp::HttpStatusCode::OK, js.dump() });
         });
 
-    hs->Register(
+    srv->Register(
         "/game/v1/rpc",
         ghttp::HttpMethod::POST,
         [](ghttp::CRequest* req, ghttp::CResponse* rsp) {
@@ -241,14 +241,14 @@ void CApp::WebRegister(std::shared_ptr<CHTTPServer> hs)
             return false;
         });
 
-    hs->ServeWs("/game/ws", [](CWebSocket* ws, std::string_view data) {
+    srv->ServeWs("/game/ws", [](CWebSocket* ws, std::string_view data) {
         std::string d(data.data(), data.length());
         CINFO("websocket on data %s", d.c_str());
         ws->SendCmd(CWSParser::WS_OPCODE_TXTFRAME, data);
         return true;
     });
 
-    hs->Register(
+    srv->Register(
         "/game/wscli",
         ghttp::HttpMethod::POST,
         [](ghttp::CRequest* req, ghttp::CResponse* rsp) {
@@ -262,14 +262,18 @@ void CApp::WebRegister(std::shared_ptr<CHTTPServer> hs)
         });
 }
 
-void CApp::TcpRegister(const std::string host, std::shared_ptr<CTCPServer> hs)
+void CApp::TcpRegister(const std::string host, std::shared_ptr<CTCPServer> srv)
 {
-    hs->ListenAndServe(host, [host](const int32_t fd) {
+    srv->ListenAndServe(host, [host](const int32_t fd) {
         CConnectionHandler* h = CNEW CConnectionHandler();
         h->Register(
-            [h](std::string_view) { return true; },
+            [h](std::string_view data) {
+                auto h2 = (CHTTP2SessionData *)h->H2Session;
+                return h2->Receive(data);
+            },
             [h]() {
-                CINFO("closed");
+                auto h2 = (CHTTP2SessionData *)h->H2Session;
+                CDEL(h2)
             },
             [h]() {
                 CINFO("%s has been connected", h->Connection()->PeerIp());
@@ -283,6 +287,8 @@ void CApp::TcpRegister(const std::string host, std::shared_ptr<CTCPServer> hs)
                 if (!alpn || alpnlen != 2 || memcmp("h2", alpn, 2) != 0) {
                     CERROR("%s h2 is not negotiated", h->Connection()->PeerIp());
                 }
+                auto h2 = CHTTP2SessionData::InitNghttp2SessionData(bv);
+                h->H2Session = h2;
             });
         h->Init(fd, host);
     });

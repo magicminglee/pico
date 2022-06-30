@@ -98,7 +98,7 @@ class CApp {
                 if (schema == "http" || schema == "https") {
                     m_http_server.push_back(std::make_shared<CHTTPServer>());
                     auto ref = m_http_server.back();
-                    if (!ref->Init(v)) {
+                    if (!ref->ListenAndServe(v)) {
                         CERROR("CTX:%s HttpServer::Init %s", MYARGS.CTXID.c_str(), v.c_str());
                         continue;
                     }

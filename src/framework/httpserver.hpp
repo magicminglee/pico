@@ -6,6 +6,8 @@
 #include "object.hpp"
 #include "wsparser.hpp"
 
+#include "nghttp2/nghttp2.h"
+
 NAMESPACE_FRAMEWORK_BEGIN
 
 namespace ghttp {
@@ -101,6 +103,38 @@ private:
     Callback m_rdfunc = { nullptr };
 };
 
+class CHTTP2SessionData {
+public:
+    struct CStreamData {
+        int32_t StreamId;
+    };
+    static CHTTP2SessionData* InitNghttp2SessionData(struct bufferevent* bev);
+    CHTTP2SessionData(struct bufferevent* bev);
+    ~CHTTP2SessionData();
+    CStreamData* AddStreamData(const int32_t streamid);
+    void RemoveStreamData(CStreamData*);
+    size_t Receive(std::string_view data);
+    bool SendCmd();
+    bool SendResponse(const CStreamData*, std::unordered_map<std::string, std::string> hrd, std::string_view data);
+
+private:
+    static ssize_t sendCallback(nghttp2_session* session, const uint8_t* data, size_t length, int flags, void* user_data);
+    static int onFrameRecvCallback(nghttp2_session* session, const nghttp2_frame* frame, void* user_data);
+    static int onStreamCloseCallback(nghttp2_session* session, int32_t stream_id, uint32_t error_code, void* user_data);
+    static int onHeaderCallback(nghttp2_session* session,
+        const nghttp2_frame* frame, const uint8_t* name,
+        size_t namelen, const uint8_t* value,
+        size_t valuelen, uint8_t flags, void* user_data);
+    static int onBeginHeadersCallback(nghttp2_session* session, const nghttp2_frame* frame, void* user_data);
+    static int onRequestRecv(nghttp2_session* session, CHTTP2SessionData* session_data, CStreamData* stream_data);
+    bool sendServerConnectionHeader();
+
+private:
+    struct bufferevent* m_bev = { nullptr };
+    nghttp2_session* m_session = { nullptr };
+    std::list<CStreamData*> m_streams;
+};
+
 class CHTTPServer : public CObject {
     typedef std::optional<std::pair<ghttp::HttpStatusCode, std::string>> HttpEventType(ghttp::CRequest*, ghttp::CResponse*);
 
@@ -116,7 +150,7 @@ public:
     CHTTPServer() = default;
     CHTTPServer(CHTTPServer&&);
     ~CHTTPServer();
-    bool Init(std::string host);
+    bool ListenAndServe(std::string host);
     void ServeWs(const std::string path, CWebSocket::Callback cb);
     bool Register(const std::string path, ghttp::HttpMethod cmd, ghttp::HttpReqRspCallback cb);
     bool Register(const std::string path, FilterData rd);

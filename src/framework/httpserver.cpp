@@ -241,6 +241,7 @@ void CRequest::SetUid(const int64_t uid)
     this->uid = uid;
 }
 
+///////////////////////////////////////////////////////////////CRequest////////////////////////////////////////////////////////
 std::optional<int64_t> CRequest::GetUid() const
 {
     return uid;
@@ -535,7 +536,7 @@ std::optional<std::pair<ghttp::HttpStatusCode, std::string>> CHTTPServer::EmitEv
     return std::nullopt;
 }
 
-bool CHTTPServer::Init(std::string host)
+bool CHTTPServer::ListenAndServe(std::string host)
 {
     CheckCondition(!host.empty(), true);
     CheckCondition(!m_http, true);
@@ -919,15 +920,253 @@ void CWebSocket::onWrite(struct bufferevent* bev, void* arg)
 {
     CWebSocket* self = (CWebSocket*)arg;
     if (self->m_parser.IsClose()) {
-        CINFO("close when onWrite");
+        CINFO("%s is closed", __FUNCTION__);
         CDEL(self);
     }
 }
 
 void CWebSocket::onError(struct bufferevent* bev, short which, void* arg)
 {
+    CINFO("%s", __FUNCTION__);
     CWebSocket* self = (CWebSocket*)arg;
     CDEL(self);
-    CINFO("onError");
+}
+/////////////////////////////////////////////////////////////////////////CHTTP2Client/////////////////////////////////////////////////////////////
+#define ARRLEN(x) (sizeof(x) / sizeof(x[0]))
+
+#define MAKE_NV(NAME, VALUE)                                                  \
+    {                                                                         \
+        (uint8_t*)NAME, (uint8_t*)VALUE, sizeof(NAME) - 1, sizeof(VALUE) - 1, \
+            NGHTTP2_NV_FLAG_NONE                                              \
+    }
+
+CHTTP2SessionData::CHTTP2SessionData(struct bufferevent* bev)
+    : m_bev(bev)
+{
+    CINFO("%s", __FUNCTION__);
+}
+
+CHTTP2SessionData::~CHTTP2SessionData()
+{
+    CINFO("%s", __FUNCTION__);
+    if (m_bev) {
+        SSL* ssl = bufferevent_openssl_get_ssl(m_bev);
+        if (ssl)
+            SSL_shutdown(ssl);
+        bufferevent_free(m_bev);
+    }
+    if (m_session)
+        nghttp2_session_del(m_session);
+    for (auto& v : m_streams) {
+        CDEL(v);
+    }
+    m_streams.clear();
+}
+
+CHTTP2SessionData::CStreamData* CHTTP2SessionData::AddStreamData(const int32_t streamid)
+{
+    CINFO("%s", __FUNCTION__);
+    auto s = CNEW CStreamData { .StreamId = streamid };
+    m_streams.push_back(s);
+    return m_streams.back();
+}
+
+void CHTTP2SessionData::RemoveStreamData(CStreamData* s)
+{
+    CINFO("%s", __FUNCTION__);
+    for (auto it = std::begin(m_streams); it != std::end(m_streams); ++it) {
+        if ((*it) == s) {
+            m_streams.erase(it);
+            break;
+        }
+    }
+}
+
+ssize_t CHTTP2SessionData::sendCallback(nghttp2_session* session, const uint8_t* data, size_t length, int flags, void* user_data)
+{
+    CINFO("%s", __FUNCTION__);
+    CHTTP2SessionData* session_data = (CHTTP2SessionData*)user_data;
+    struct bufferevent* bev = session_data->m_bev;
+    (void)session;
+    (void)flags;
+
+    /* Avoid excessive buffering in server side. */
+    if (evbuffer_get_length(bufferevent_get_output(bev)) >= 0xFFFFF) {
+        return NGHTTP2_ERR_WOULDBLOCK;
+    }
+    bufferevent_write(bev, data, length);
+    return (ssize_t)length;
+}
+
+int CHTTP2SessionData::onRequestRecv(nghttp2_session* session, CHTTP2SessionData* session_data, CHTTP2SessionData::CStreamData* stream_data)
+{
+    CINFO("%s", __FUNCTION__);
+    // int fd;
+    nghttp2_nv hdrs[] = { MAKE_NV(":status", "200") };
+    // char* rel_path;
+
+    // if (!stream_data->request_path) {
+    //     if (error_reply(session, stream_data) != 0) {
+    //         return NGHTTP2_ERR_CALLBACK_FAILURE;
+    //     }
+    //     return 0;
+    // }
+    // for (rel_path = stream_data->request_path; *rel_path == '/'; ++rel_path)
+    //     ;
+    // fd = open(rel_path, O_RDONLY);
+    // if (fd == -1) {
+    //     if (error_reply(session, stream_data) != 0) {
+    //         return NGHTTP2_ERR_CALLBACK_FAILURE;
+    //     }
+    //     return 0;
+    // }
+    // stream_data->fd = fd;
+
+    // if (!session_data->SendResponse(stream_data, hdrs, { { ":status", "200" } }, "OK")) {
+    //     return NGHTTP2_ERR_CALLBACK_FAILURE;
+    // }
+    return 0;
+}
+
+int CHTTP2SessionData::onFrameRecvCallback(nghttp2_session* session, const nghttp2_frame* frame, void* user_data)
+{
+    CINFO("%s,%u", __FUNCTION__, frame->hd.type);
+    CHTTP2SessionData* session_data = (CHTTP2SessionData*)user_data;
+    switch (frame->hd.type) {
+    case NGHTTP2_DATA:
+    case NGHTTP2_HEADERS:
+        /* Check that the client request has finished */
+        if (frame->hd.flags & NGHTTP2_FLAG_END_STREAM) {
+            CStreamData* stream_data = (CStreamData*)nghttp2_session_get_stream_user_data(session, frame->hd.stream_id);
+            /* For DATA and HEADERS frame, this callback may be called after
+               onstreamclosecallback. Check that stream still alive. */
+            if (!stream_data) {
+                return 0;
+            }
+            return onRequestRecv(session, session_data, stream_data);
+        }
+        break;
+    default:
+        break;
+    }
+    return 0;
+}
+
+int CHTTP2SessionData::onStreamCloseCallback(nghttp2_session* session, int32_t stream_id, uint32_t error_code, void* user_data)
+{
+    CINFO("%s", __FUNCTION__);
+    CHTTP2SessionData* session_data = (CHTTP2SessionData*)user_data;
+    (void)error_code;
+
+    CStreamData* stream_data = (CStreamData*)nghttp2_session_get_stream_user_data(session, stream_id);
+    if (!stream_data) {
+        return 0;
+    }
+    session_data->RemoveStreamData(stream_data);
+    return 0;
+}
+
+/* nghttp2_on_header_callback: Called when nghttp2 library emits
+   single header name/value pair. */
+int CHTTP2SessionData::onHeaderCallback(nghttp2_session* session,
+    const nghttp2_frame* frame, const uint8_t* name,
+    size_t namelen, const uint8_t* value,
+    size_t valuelen, uint8_t flags, void* user_data)
+{
+    CINFO("%s", __FUNCTION__);
+    const char PATH[] = ":path";
+    (void)flags;
+    (void)user_data;
+
+    switch (frame->hd.type) {
+    case NGHTTP2_HEADERS:
+        if (frame->headers.cat != NGHTTP2_HCAT_REQUEST) {
+            break;
+        }
+        CStreamData* stream_data = (CStreamData*)nghttp2_session_get_stream_user_data(session, frame->hd.stream_id);
+        if (!stream_data) {
+            break;
+        }
+        // if (namelen == sizeof(PATH) - 1 && memcmp(PATH, name, namelen) == 0) {
+        //     size_t j;
+        //     for (j = 0; j < valuelen && value[j] != '?'; ++j)
+        //         ;
+        //     stream_data->request_path = percent_decode(value, j);
+        // }
+        break;
+    }
+    return 0;
+}
+
+int CHTTP2SessionData::onBeginHeadersCallback(nghttp2_session* session, const nghttp2_frame* frame, void* user_data)
+{
+    CINFO("%s", __FUNCTION__);
+    CHTTP2SessionData* session_data = (CHTTP2SessionData*)user_data;
+
+    if (frame->hd.type != NGHTTP2_HEADERS || frame->headers.cat != NGHTTP2_HCAT_REQUEST) {
+        return 0;
+    }
+    CStreamData* stream_data = session_data->AddStreamData(frame->hd.stream_id);
+    nghttp2_session_set_stream_user_data(session, frame->hd.stream_id, stream_data);
+    return 0;
+}
+
+bool CHTTP2SessionData::sendServerConnectionHeader()
+{
+    nghttp2_settings_entry iv[1] = {
+        { NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS, 100 }
+    };
+
+    int32_t rv = nghttp2_submit_settings(m_session, NGHTTP2_FLAG_NONE, iv, ARRLEN(iv));
+    if (rv != 0) {
+        CERROR("Fatal error: %s", nghttp2_strerror(rv));
+        return false;
+    }
+    return true;
+}
+
+bool CHTTP2SessionData::SendCmd()
+{
+    int32_t rv = nghttp2_session_send(m_session);
+    if (rv != 0) {
+        CERROR("Fatal error: %s", nghttp2_strerror(rv));
+        return false;
+    }
+    return true;
+}
+
+size_t CHTTP2SessionData::Receive(std::string_view data)
+{
+    size_t readlen = nghttp2_session_mem_recv(m_session, (const uint8_t*)data.data(), data.length());
+    return readlen;
+}
+
+CHTTP2SessionData* CHTTP2SessionData::InitNghttp2SessionData(struct bufferevent* bev)
+{
+    CINFO("%s", __FUNCTION__);
+    CHTTP2SessionData* h2 = CNEW CHTTP2SessionData(bev);
+    nghttp2_session_callbacks* callbacks;
+
+    nghttp2_session_callbacks_new(&callbacks);
+
+    nghttp2_session_callbacks_set_send_callback(callbacks, sendCallback);
+
+    nghttp2_session_callbacks_set_on_frame_recv_callback(callbacks, onFrameRecvCallback);
+
+    nghttp2_session_callbacks_set_on_stream_close_callback(callbacks, onStreamCloseCallback);
+
+    nghttp2_session_callbacks_set_on_header_callback(callbacks, onHeaderCallback);
+
+    nghttp2_session_callbacks_set_on_begin_headers_callback(callbacks, onBeginHeadersCallback);
+
+    nghttp2_session_server_new(&h2->m_session, callbacks, h2);
+
+    nghttp2_session_callbacks_del(callbacks);
+
+    if (!h2->sendServerConnectionHeader() || !h2->SendCmd()) {
+        CDEL(h2);
+    }
+
+    return h2;
 }
 NAMESPACE_FRAMEWORK_END

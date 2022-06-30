@@ -84,7 +84,7 @@ bool CTCPServer::ListenAndServe(std::string host, std::function<void(const int32
             EV_READ | EV_PERSIST,
             nullptr,
             [this]() {
-                if (auto sfd = this->getAcceptFd(this->m_listenfd); sfd > 0)
+                if (auto sfd = this->getAcceptFd(); sfd > 0)
                     this->m_connected_callback(sfd);
             });
         !m_ev) {
@@ -97,11 +97,8 @@ bool CTCPServer::ListenAndServe(std::string host, std::function<void(const int32
     return true;
 }
 
-int32_t CTCPServer::getAcceptFd(int32_t fd)
+const int32_t CTCPServer::getAcceptFd()
 {
-    if (fd != m_listenfd)
-        return -1;
-
     struct sockaddr_storage addr;
     socklen_t addrlen = 0;
     memset(&addr, 0, sizeof(addr));

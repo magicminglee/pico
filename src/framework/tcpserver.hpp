@@ -16,13 +16,13 @@ public:
 private:
     bool setOption();
     void destroy();
-    int32_t getAcceptFd(const int32_t fd);
+    const int32_t getAcceptFd();
 
 private:
     evutil_socket_t m_listenfd = { -1 };
     CEvent* m_ev = { nullptr };
     std::function<void(const int32_t)> m_connected_callback = { nullptr };
-    //DISABLE_CLASS_COPYABLE(CTCPServer);
+    // DISABLE_CLASS_COPYABLE(CTCPServer);
 };
 
 NAMESPACE_FRAMEWORK_END

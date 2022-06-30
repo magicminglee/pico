@@ -67,7 +67,6 @@ bool CConnectionHandler::Init(const int32_t fd, const std::string host)
     if (schema == "https" || schema == "wss") {
         ssl = CSSLContex::Instance().CreateOneSSL();
     }
-    m_first_package = true;
     m_conn.reset(CNEW CConnection());
     m_conn->SetStreamTypeBySchema(schema);
     return CConnectionHandler::init(fd, onRead, onWrite, onError, ssl, fd > 0);
@@ -81,47 +80,6 @@ bool CConnectionHandler::SendXGameMsg(const uint16_t maincmd, const uint16_t sub
 bool CConnectionHandler::ForwardMsg(const uint16_t maincmd, const uint16_t subcmd, const std::string_view data)
 {
     return m_conn->ForwardMsg(maincmd, subcmd, data);
-}
-
-int32_t CConnectionHandler::handleHeadPacket(const std::string_view data)
-{
-    int32_t res = -1;
-    if (m_conn->IsStreamType(CConnection::StreamType::StreamType_HAProxy)) { // HAProxy
-        XGAMEHAProxyHeader hdr;
-        memset(&hdr, 0, sizeof(hdr));
-        uint32_t size = data.size() > sizeof(hdr) ? sizeof(hdr) : data.size();
-        CDecoder<XGAMEHAProxyHeader> hadec(data.data(), size);
-        res = hadec.Decode(hdr);
-        if (res > 0) {
-            char peerIp[64] = { 0 };
-            snprintf(peerIp, sizeof(peerIp) - 1, "%u.%u.%u.%u",
-                hdr.hahdr.v2.addr.ip4.src_addr >> 24,
-                (hdr.hahdr.v2.addr.ip4.src_addr >> 16) & 0x00FF,
-                (hdr.hahdr.v2.addr.ip4.src_addr & 0xFF00) >> 8,
-                hdr.hahdr.v2.addr.ip4.src_addr & 0xFF);
-
-            m_conn->m_peer_ip = peerIp;
-            m_conn->m_peer_port = hdr.hahdr.v2.addr.ip4.src_port;
-
-            CDEBUG(
-                "CTX:%s HAProxy client addrinfo:%p,%ld,srcip:%u.%u.%u.%u,dstip:%u.%u.%u.%u,srcport:%u,dstport:%u",
-                MYARGS.CTXID.c_str(),
-                this, Id(), hdr.hahdr.v2.addr.ip4.src_addr >> 24,
-                (hdr.hahdr.v2.addr.ip4.src_addr >> 16) & 0x00FF,
-                (hdr.hahdr.v2.addr.ip4.src_addr & 0xFF00) >> 8,
-                hdr.hahdr.v2.addr.ip4.src_addr & 0xFF,
-                hdr.hahdr.v2.addr.ip4.dst_addr >> 24,
-                (hdr.hahdr.v2.addr.ip4.dst_addr >> 16) & 0x00FF,
-                (hdr.hahdr.v2.addr.ip4.dst_addr & 0xFF00) >> 8,
-                hdr.hahdr.v2.addr.ip4.dst_addr & 0xFF,
-                hdr.hahdr.v2.addr.ip4.src_port, hdr.hahdr.v2.addr.ip4.dst_port);
-
-            return res;
-        } else if (0 == res) {
-            CDEBUG("CTX:%s HAProxy to be continue:%p,%ld", MYARGS.CTXID.c_str(), this, Id());
-        }
-    }
-    return res;
 }
 
 void CConnectionHandler::onRead(struct bufferevent* bev, void* arg)
@@ -138,26 +96,8 @@ void CConnectionHandler::onRead(struct bufferevent* bev, void* arg)
             self->m_close_callback();
         return;
     }
-    while (len > 0 && len < MAX_WATERMARK_SIZE) {
-        if (self->m_first_package) {
-            uint32_t dlen = len > MAX_WATERMARK_SIZE ? MAX_WATERMARK_SIZE : len;
-            evbuffer_copyout(input, buffer, dlen);
-            int32_t ret = self->handleHeadPacket(std::string_view(buffer, dlen));
-            if (ret > 0) {
-                evbuffer_drain(input, ret);
-                len = evbuffer_get_length(input);
-                //<<<packet(HAProxy->RawPacket)
-                if (self->m_conn->IsStreamType(CConnection::StreamType::StreamType_HAProxy)) {
-                    self->m_conn->ShellProxy();
-                    continue;
-                }
-            } else if (ret == 0) {
-                break;
-            }
-            self->m_first_package = false;
-            continue;
-        }
-
+    // while (len > 0 && len < MAX_WATERMARK_SIZE)
+    {
         if (self->m_conn->IsStreamType(CConnection::StreamType::StreamType_Tcp)
             || self->m_conn->IsStreamType(CConnection::StreamType::StreamType_Unix)
             || self->m_conn->IsStreamType(CConnection::StreamType::StreamType_HTTPS)
@@ -166,15 +106,14 @@ void CConnectionHandler::onRead(struct bufferevent* bev, void* arg)
                 auto data = (char*)evbuffer_pullup(input, -1);
                 auto dlen = evbuffer_get_length(input);
                 std::string_view sv(data, dlen);
-                self->m_read_callback(sv);
-                evbuffer_drain(input, dlen);
+                auto readlen = self->m_read_callback(sv);
+                evbuffer_drain(input, readlen);
                 len = evbuffer_get_length(input);
             }
         } else {
             CERROR("CTX:%s %ld %lu not supported socket protocol type", MYARGS.CTXID.c_str(), self->Id(), len);
             if (self->m_close_callback)
                 self->m_close_callback();
-            break;
         }
     }
 }
