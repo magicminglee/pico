@@ -984,7 +984,6 @@ void CHTTP2SessionData::RemoveStreamData(CStreamData* s)
 
 ssize_t CHTTP2SessionData::sendCallback(nghttp2_session* session, const uint8_t* data, size_t length, int flags, void* user_data)
 {
-    CINFO("%s", __FUNCTION__);
     CHTTP2SessionData* session_data = (CHTTP2SessionData*)user_data;
     struct bufferevent* bev = session_data->m_bev;
     (void)session;
@@ -994,6 +993,7 @@ ssize_t CHTTP2SessionData::sendCallback(nghttp2_session* session, const uint8_t*
     if (evbuffer_get_length(bufferevent_get_output(bev)) >= 0xFFFFF) {
         return NGHTTP2_ERR_WOULDBLOCK;
     }
+    CINFO("%s,%s,%lu", __FUNCTION__, data, length);
     bufferevent_write(bev, data, length);
     return (ssize_t)length;
 }
@@ -1002,7 +1002,6 @@ int CHTTP2SessionData::onRequestRecv(nghttp2_session* session, CHTTP2SessionData
 {
     CINFO("%s", __FUNCTION__);
     // int fd;
-    nghttp2_nv hdrs[] = { MAKE_NV(":status", "200") };
     // char* rel_path;
 
     // if (!stream_data->request_path) {
@@ -1022,15 +1021,15 @@ int CHTTP2SessionData::onRequestRecv(nghttp2_session* session, CHTTP2SessionData
     // }
     // stream_data->fd = fd;
 
-    // if (!session_data->SendResponse(stream_data, hdrs, { { ":status", "200" } }, "OK")) {
-    //     return NGHTTP2_ERR_CALLBACK_FAILURE;
-    // }
+    if (!session_data->SendResponse(stream_data, { { ":status", "200" } }, "OK")) {
+        return NGHTTP2_ERR_CALLBACK_FAILURE;
+    }
     return 0;
 }
 
 int CHTTP2SessionData::onFrameRecvCallback(nghttp2_session* session, const nghttp2_frame* frame, void* user_data)
 {
-    CINFO("%s,%u", __FUNCTION__, frame->hd.type);
+    CINFO("%s,%d,%u,0x%x", __FUNCTION__, frame->hd.stream_id, frame->hd.type, frame->hd.flags);
     CHTTP2SessionData* session_data = (CHTTP2SessionData*)user_data;
     switch (frame->hd.type) {
     case NGHTTP2_DATA:
@@ -1073,7 +1072,7 @@ int CHTTP2SessionData::onHeaderCallback(nghttp2_session* session,
     size_t namelen, const uint8_t* value,
     size_t valuelen, uint8_t flags, void* user_data)
 {
-    CINFO("%s", __FUNCTION__);
+    CINFO("%s,%d,%s,%s", __FUNCTION__, frame->headers.hd.stream_id, name, value);
     const char PATH[] = ":path";
     (void)flags;
     (void)user_data;
@@ -1087,12 +1086,12 @@ int CHTTP2SessionData::onHeaderCallback(nghttp2_session* session,
         if (!stream_data) {
             break;
         }
-        // if (namelen == sizeof(PATH) - 1 && memcmp(PATH, name, namelen) == 0) {
-        //     size_t j;
-        //     for (j = 0; j < valuelen && value[j] != '?'; ++j)
-        //         ;
-        //     stream_data->request_path = percent_decode(value, j);
-        // }
+        if (namelen == sizeof(PATH) - 1 && memcmp(PATH, name, namelen) == 0) {
+            size_t j;
+            for (j = 0; j < valuelen && value[j] != '?'; ++j)
+                ;
+            stream_data->RequestPath = std::string((char*)value, j);
+        }
         break;
     }
     return 0;
@@ -1100,7 +1099,7 @@ int CHTTP2SessionData::onHeaderCallback(nghttp2_session* session,
 
 int CHTTP2SessionData::onBeginHeadersCallback(nghttp2_session* session, const nghttp2_frame* frame, void* user_data)
 {
-    CINFO("%s", __FUNCTION__);
+    CINFO("%s,%d,%u", __FUNCTION__, frame->hd.stream_id, frame->hd.type);
     CHTTP2SessionData* session_data = (CHTTP2SessionData*)user_data;
 
     if (frame->hd.type != NGHTTP2_HEADERS || frame->headers.cat != NGHTTP2_HCAT_REQUEST) {
@@ -1125,7 +1124,7 @@ bool CHTTP2SessionData::sendServerConnectionHeader()
     return true;
 }
 
-bool CHTTP2SessionData::SendCmd()
+bool CHTTP2SessionData::SessionSend()
 {
     int32_t rv = nghttp2_session_send(m_session);
     if (rv != 0) {
@@ -1135,7 +1134,26 @@ bool CHTTP2SessionData::SendCmd()
     return true;
 }
 
-size_t CHTTP2SessionData::Receive(std::string_view data)
+bool CHTTP2SessionData::SendResponse(const CStreamData* stream, std::unordered_map<std::string, std::string> header, const std::string& data)
+{
+    int rv;
+    nghttp2_data_provider data_prd;
+    data_prd.source.ptr = (void*)data.data();
+
+    std::vector<nghttp2_nv> hdrs;
+    for (auto& [k, v] : header) {
+        hdrs.push_back(MAKE_NV(k.c_str(), v.c_str()));
+    }
+    CINFO("%s,%d", __FUNCTION__, stream->StreamId);
+    rv = nghttp2_submit_response(m_session, stream->StreamId, hdrs.data(), hdrs.size(), &data_prd);
+    if (rv != 0) {
+        CERROR("Fatal error: %s", nghttp2_strerror(rv));
+        return false;
+    }
+    return true;
+}
+
+size_t CHTTP2SessionData::SessionReceive(std::string_view data)
 {
     size_t readlen = nghttp2_session_mem_recv(m_session, (const uint8_t*)data.data(), data.length());
     return readlen;
@@ -1163,7 +1181,7 @@ CHTTP2SessionData* CHTTP2SessionData::InitNghttp2SessionData(struct bufferevent*
 
     nghttp2_session_callbacks_del(callbacks);
 
-    if (!h2->sendServerConnectionHeader() || !h2->SendCmd()) {
+    if (!h2->sendServerConnectionHeader() || !h2->SessionSend()) {
         CDEL(h2);
     }
 

@@ -269,7 +269,7 @@ void CApp::TcpRegister(const std::string host, std::shared_ptr<CTCPServer> srv)
         h->Register(
             [h](std::string_view data) {
                 auto h2 = (CHTTP2SessionData *)h->H2Session;
-                return h2->Receive(data);
+                return h2->SessionReceive(data);
             },
             [h]() {
                 auto h2 = (CHTTP2SessionData *)h->H2Session;

@@ -106,6 +106,7 @@ private:
 class CHTTP2SessionData {
 public:
     struct CStreamData {
+        std::optional<std::string> RequestPath;
         int32_t StreamId;
     };
     static CHTTP2SessionData* InitNghttp2SessionData(struct bufferevent* bev);
@@ -113,9 +114,9 @@ public:
     ~CHTTP2SessionData();
     CStreamData* AddStreamData(const int32_t streamid);
     void RemoveStreamData(CStreamData*);
-    size_t Receive(std::string_view data);
-    bool SendCmd();
-    bool SendResponse(const CStreamData*, std::unordered_map<std::string, std::string> hrd, std::string_view data);
+    size_t SessionReceive(std::string_view data);
+    bool SessionSend();
+    bool SendResponse(const CStreamData* stream, std::unordered_map<std::string, std::string> header, const std::string& data);
 
 private:
     static ssize_t sendCallback(nghttp2_session* session, const uint8_t* data, size_t length, int flags, void* user_data);
