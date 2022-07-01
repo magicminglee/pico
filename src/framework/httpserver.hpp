@@ -112,11 +112,9 @@ public:
     static CHTTP2SessionData* InitNghttp2SessionData(struct bufferevent* bev);
     CHTTP2SessionData(struct bufferevent* bev);
     ~CHTTP2SessionData();
-    CStreamData* AddStreamData(const int32_t streamid);
-    void RemoveStreamData(CStreamData*);
-    size_t SessionReceive(std::string_view data);
-    bool SessionSend();
-    bool SendResponse(const CStreamData* stream, std::unordered_map<std::string, std::string> header, const std::string& data);
+    ssize_t OnReceive(std::string_view data);
+    void OnWrite();
+    bool SendResponse(const CStreamData* stream, std::unordered_map<std::string, std::string> header, const int32_t fd);
 
 private:
     static ssize_t sendCallback(nghttp2_session* session, const uint8_t* data, size_t length, int flags, void* user_data);
@@ -127,13 +125,16 @@ private:
         size_t namelen, const uint8_t* value,
         size_t valuelen, uint8_t flags, void* user_data);
     static int onBeginHeadersCallback(nghttp2_session* session, const nghttp2_frame* frame, void* user_data);
-    static int onRequestRecv(nghttp2_session* session, CHTTP2SessionData* session_data, CStreamData* stream_data);
+    int onRequestRecv(CStreamData* stream_data);
     bool sendServerConnectionHeader();
+    CStreamData* addStreamData(const int32_t streamid);
+    void removeStreamData(CStreamData*);
+    bool sessionSend();
 
 private:
     struct bufferevent* m_bev = { nullptr };
     nghttp2_session* m_session = { nullptr };
-    std::list<CStreamData*> m_streams;
+    std::map<int32_t, CStreamData*> m_streams;
 };
 
 class CHTTPServer : public CObject {

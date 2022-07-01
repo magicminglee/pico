@@ -35,7 +35,7 @@ CEvent* CEvent::Create(event_base* base, evutil_socket_t fd, short flags, std::f
     }
     return nullptr;
 }
-//End CEvent
+// End CEvent
 
 CContex::CContex()
 {

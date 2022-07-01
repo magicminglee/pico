@@ -268,27 +268,32 @@ void CApp::TcpRegister(const std::string host, std::shared_ptr<CTCPServer> srv)
         CConnectionHandler* h = CNEW CConnectionHandler();
         h->Register(
             [h](std::string_view data) {
-                auto h2 = (CHTTP2SessionData *)h->H2Session;
-                return h2->SessionReceive(data);
+                auto h2 = (CHTTP2SessionData*)h->H2Session;
+                return h2->OnReceive(data);
             },
             [h]() {
-                auto h2 = (CHTTP2SessionData *)h->H2Session;
-                CDEL(h2)
+                auto h2 = (CHTTP2SessionData*)h->H2Session;
+                h2->OnWrite();
             },
-            [h]() {
-                CINFO("%s has been connected", h->Connection()->PeerIp());
-                const unsigned char* alpn = nullptr;
-                unsigned int alpnlen = 0;
-                auto bv = h->Connection()->GetBufEvent();
-                auto ssl = bufferevent_openssl_get_ssl(bv);
-                if (!alpn) {
-                    SSL_get0_alpn_selected(ssl, &alpn, &alpnlen);
+            [h](const EnumConnEventType e) {
+                if (e == EnumConnEventType::EnumConnEventType_Connected) {
+                    CINFO("%s has been connected", h->Connection()->PeerIp());
+                    const unsigned char* alpn = nullptr;
+                    unsigned int alpnlen = 0;
+                    auto bv = h->Connection()->GetBufEvent();
+                    auto ssl = bufferevent_openssl_get_ssl(bv);
+                    if (!alpn) {
+                        SSL_get0_alpn_selected(ssl, &alpn, &alpnlen);
+                    }
+                    if (!alpn || alpnlen != 2 || memcmp("h2", alpn, 2) != 0) {
+                        CERROR("%s h2 is not negotiated", h->Connection()->PeerIp());
+                    }
+                    auto h2 = CHTTP2SessionData::InitNghttp2SessionData(bv);
+                    h->H2Session = h2;
+                } else if (e == EnumConnEventType::EnumConnEventType_Closed) {
+                    auto h2 = (CHTTP2SessionData*)h->H2Session;
+                    CDEL(h2)
                 }
-                if (!alpn || alpnlen != 2 || memcmp("h2", alpn, 2) != 0) {
-                    CERROR("%s h2 is not negotiated", h->Connection()->PeerIp());
-                }
-                auto h2 = CHTTP2SessionData::InitNghttp2SessionData(bv);
-                h->H2Session = h2;
             });
         h->Init(fd, host);
     });

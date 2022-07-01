@@ -53,11 +53,11 @@ bool CConnectionHandler::Connect(std::string host, std::optional<bool> ipv6)
     return m_conn->Connnect(hostname, std::stoi(port), ipv6 ? false : true);
 }
 
-void CConnectionHandler::Register(CReadCBFunc readcb, CCloseCBFunc closecb, CConnectedCBFunc connectcb)
+void CConnectionHandler::Register(CReadCBFunc readcb, CWriteCBFunc writecb, CEventCBFunc eventcb)
 {
     m_read_callback = readcb;
-    m_close_callback = closecb;
-    m_connected_callback = connectcb;
+    m_write_callback = writecb;
+    m_event_callback = eventcb;
 }
 
 bool CConnectionHandler::Init(const int32_t fd, const std::string host)
@@ -92,8 +92,9 @@ void CConnectionHandler::onRead(struct bufferevent* bev, void* arg)
     size_t len = evbuffer_get_length(input);
     if (len <= 0 || len >= MAX_WATERMARK_SIZE) {
         CERROR("%p,%ld Buffer is overflow!", self, self->Connection()->Id());
-        if (self->m_close_callback)
-            self->m_close_callback();
+        if (self->m_event_callback)
+            self->m_event_callback(EnumConnEventType::EnumConnEventType_Closed);
+        self->m_write_callback();
         return;
     }
     // while (len > 0 && len < MAX_WATERMARK_SIZE)
@@ -112,8 +113,8 @@ void CConnectionHandler::onRead(struct bufferevent* bev, void* arg)
             }
         } else {
             CERROR("CTX:%s %ld %lu not supported socket protocol type", MYARGS.CTXID.c_str(), self->Id(), len);
-            if (self->m_close_callback)
-                self->m_close_callback();
+            if (self->m_event_callback)
+                self->m_event_callback(EnumConnEventType::EnumConnEventType_Closed);
         }
     }
 }
@@ -123,8 +124,12 @@ void CConnectionHandler::onWrite(struct bufferevent* bev, void* arg)
     CConnectionHandler* self = (CConnectionHandler*)arg;
     if (self->m_conn->IsClosing()) {
         CINFO("CTX:%s %s need to recycle %p,%ld,%p", MYARGS.CTXID.c_str(), __FUNCTION__, self->m_conn.get(), self->m_conn->Id(), bev);
-        if (self->m_close_callback)
-            self->m_close_callback();
+        if (self->m_event_callback)
+            self->m_event_callback(EnumConnEventType::EnumConnEventType_Closed);
+    } else {
+        if (self->m_write_callback) {
+            self->m_write_callback();
+        }
     }
 }
 
@@ -132,16 +137,16 @@ void CConnectionHandler::onError(struct bufferevent* bev, short which, void* arg
 {
     CConnectionHandler* self = (CConnectionHandler*)arg;
     if (which & BEV_EVENT_CONNECTED) {
-        if (self->m_connected_callback)
-            self->m_connected_callback();
+        if (self->m_event_callback)
+            self->m_event_callback(EnumConnEventType::EnumConnEventType_Connected);
         return;
     } else if (which & BEV_EVENT_EOF) {
     } else if (which & BEV_EVENT_ERROR) {
     } else if (which & BEV_EVENT_TIMEOUT) {
     }
     CINFO("CTX:%s %s %p,%ld,0x%x,%p", MYARGS.CTXID.c_str(), __FUNCTION__, self->m_conn.get(), self->m_conn->Id(), which, bev);
-    if (self->m_close_callback)
-        self->m_close_callback();
+    if (self->m_event_callback)
+        self->m_event_callback(EnumConnEventType::EnumConnEventType_Closed);
 }
 
 NAMESPACE_FRAMEWORK_END
