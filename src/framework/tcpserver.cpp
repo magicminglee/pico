@@ -35,7 +35,7 @@ bool CTCPServer::ListenAndServe(std::string host, std::function<void(const int32
     if (-1 != m_listenfd)
         return true;
 
-    auto [_, hostname, port] = CConnection::SplitUri(host);
+    auto [_, hostname, port, path] = CConnection::SplitUri(host);
     struct addrinfo hints;
     struct addrinfo *result = nullptr, *rp = nullptr;
     memset(&hints, 0, sizeof(hints));

@@ -3,26 +3,30 @@
 PLAFORM=$(uname)
 
 ROOT_DIR_PATH=$(pwd)
-OPENSSL_INSTALL_PATH=$(pwd)"/openssl/"
-EVENT_INSTALL_PATH=$(pwd)"/libevent/"
-CXXOPT_INSTALL_PATH=$(pwd)"/cxxopt/"
-YAML_INSTALL_PATH=$(pwd)"/yaml/"
-JSON_INSTALL_PATH=$(pwd)"/json/"
-PHR_INSTALL_PATH=$(pwd)"/phr/"
-XLOG_INSTALL_PATH=$(pwd)"/xlog/"
-PROTOBUF_INSTALL_PATH=$(pwd)"/protobuf/"
-HIREDIS_INSTALL_PATH=$(pwd)"/hiredis/"
-REDISCXX_INSTALL_PATH=$(pwd)"/rediscxx/"
-SASL2_INSTALL_PATH=$(pwd)"/sasl2/"
-SASL2_INCLUDE_PATH=$(pwd)"/sasl2/include/"
-SASL2_LIB_PATH=$(pwd)"/sasl2/lib/"
-MONGOC_INSTALL_PATH=$(pwd)"/mongoc/"
-MONGOCXX_INSTALL_PATH=$(pwd)"/mongocxx/"
-FMT_INSTALL_PATH=$(pwd)"/fmt/"
-CLICKHOUSE_INSTALL_PATH=$(pwd)"/clickhousecxx/"
-JWTCPP_INSTALL_PATH=$(pwd)"/jwt-cpp/"
+INSTALL_ROOT_DIR_PATH=$(pwd)
+OPENSSL_INSTALL_PATH="${INSTALL_ROOT_DIR_PATH}""/openssl/"
+OPENSSL_LIB_PATH="${OPENSSL_INSTALL_PATH}""/lib"
+EVENT_INSTALL_PATH="${INSTALL_ROOT_DIR_PATH}""/libevent/"
+CXXOPT_INSTALL_PATH="${INSTALL_ROOT_DIR_PATH}""/cxxopt/"
+YAML_INSTALL_PATH="${INSTALL_ROOT_DIR_PATH}""/yaml/"
+JSON_INSTALL_PATH="${INSTALL_ROOT_DIR_PATH}""/json/"
+PHR_INSTALL_PATH="${INSTALL_ROOT_DIR_PATH}""/phr/"
+XLOG_INSTALL_PATH="${INSTALL_ROOT_DIR_PATH}""/xlog/"
+PROTOBUF_INSTALL_PATH="${INSTALL_ROOT_DIR_PATH}""/protobuf/"
+HIREDIS_INSTALL_PATH="${INSTALL_ROOT_DIR_PATH}""/hiredis/"
+REDISCXX_INSTALL_PATH="${INSTALL_ROOT_DIR_PATH}""/rediscxx/"
+SASL2_INSTALL_PATH="${INSTALL_ROOT_DIR_PATH}""/sasl2/"
+SASL2_INCLUDE_PATH="${INSTALL_ROOT_DIR_PATH}""/sasl2/include/"
+SASL2_LIB_PATH="${INSTALL_ROOT_DIR_PATH}""/sasl2/lib/"
+MONGOC_INSTALL_PATH="${INSTALL_ROOT_DIR_PATH}""/mongoc/"
+MONGOCXX_INSTALL_PATH="${INSTALL_ROOT_DIR_PATH}""/mongocxx/"
+FMT_INSTALL_PATH="${INSTALL_ROOT_DIR_PATH}""/fmt/"
+CLICKHOUSE_INSTALL_PATH="${INSTALL_ROOT_DIR_PATH}""/clickhousecxx/"
+JWTCPP_INSTALL_PATH="${INSTALL_ROOT_DIR_PATH}""/jwt-cpp/"
+NGHTTP2_INSTALL_PATH="${INSTALL_ROOT_DIR_PATH}""/nghttp2/"
 
 #openssl
+rm -rf ${OPENSSL_INSTALL_PATH}
 tar xvzf openssl-OpenSSL_1_1_1l.tar.gz
 cd openssl-OpenSSL_1_1_1l
 ./config --prefix=${OPENSSL_INSTALL_PATH}
@@ -152,6 +156,15 @@ mkdir -pv ${JWTCPP_INSTALL_PATH}
 cp jwt-cpp-0.6.0/include ${JWTCPP_INSTALL_PATH} -R
 cd ${ROOT_DIR_PATH}
 rm -rf jwt-cpp-0.6.0
+
+rm -rf ${NGHTTP2_INSTALL_PATH}
+tar xvzf nghttp2-1.48.0.tar.gz
+cd nghttp2-1.48.0
+./configure --enable-lib-only --prefix=${NGHTTP2_INSTALL_PATH} PKG_CONFIG_PATH=${OPENSSL_LIB_PATH}"pkgconfig"
+make -j4
+make install
+cd ${ROOT_DIR_PATH}
+rm -rf nghttp2-1.48.0
 
 #clickhouse
 #tar xvzf clickhouse-cpp-2.1.0.tar.gz

@@ -4,6 +4,7 @@
 #include "framework/common.hpp"
 #include "framework/connhandler.hpp"
 #include "framework/global.hpp"
+#include "framework/httpmsg.hpp"
 #include "framework/httpserver.hpp"
 #include "framework/localstorage.hpp"
 #include "framework/random.hpp"
@@ -29,9 +30,13 @@ using namespace gamelibs::redis;
 using namespace gamelibs::mongo;
 
 class CApp {
+    using CommandSyncFunc = std::function<bool(const nlohmann::json&)>;
     class AppWorker final : public CWorker {
         std::vector<std::shared_ptr<CHTTPServer>> m_http_server;
         std::vector<std::shared_ptr<CTCPServer>> m_tcp_server;
+
+    public:
+        std::map<std::string, CommandSyncFunc> m_command_sync_cbs;
 
     public:
         virtual bool Init() final
@@ -44,7 +49,7 @@ class CApp {
                         CWorker::MAIN_CONTEX->Exit(0);
                     }
                 },
-                [](std::string_view data) {
+                [this](std::string_view data) {
                     try {
                         auto j = nlohmann::json::parse(std::move(data));
                         if (j["cmd"].is_string() && j["cmd"].get_ref<const std::string&>() == "reload") {
@@ -52,7 +57,6 @@ class CApp {
                                 MYARGS.LogLevel = j["loglevel"].get<std::string>();
                                 XLOG::WARN_W.UpdateLogLevel(XLOG::LogWriter::LogStrToLogLevel(MYARGS.LogLevel.value()));
                                 XLOG::INFO_W.UpdateLogLevel(XLOG::LogWriter::LogStrToLogLevel(MYARGS.LogLevel.value()));
-                                XLOG::DBLOG_W.UpdateLogLevel(XLOG::LogWriter::LogStrToLogLevel(MYARGS.LogLevel.value()));
                             }
                             if ((j.contains("certificatefile") && j["certificatefile"].is_string()
                                     && j.contains("privatekeyfile") && j["privatekeyfile"].is_string())) {
@@ -72,18 +76,25 @@ class CApp {
                                 MYARGS.ApiKey = j["apikey"].get<std::string>();
                             if (j.contains("tokenexpire") && j["tokenexpire"].is_number_unsigned())
                                 MYARGS.TokenExpire = j["tokenexpire"].get<uint32_t>();
+                            if (j.contains("httptimeout") && j["httptimeout"].is_number_unsigned())
+                                MYARGS.HttpTimeout = j["httptimeout"].get<uint32_t>();
                             if (j.contains("redisttl") && j["redisttl"].is_number_unsigned())
                                 MYARGS.RedisTTL = j["redisttl"].get<uint64_t>();
                             if (j.contains("http2able") && j["http2able"].is_boolean())
                                 MYARGS.Http2Able = j["http2able"].get<bool>();
+                            CINFO("CTX:%s reload config %s", MYARGS.CTXID.c_str(), j.dump().c_str());
+                        } else if (j["cmd"].is_string()) {
+                            if (auto it = this->m_command_sync_cbs.find(j["cmd"].get<std::string>()); it != this->m_command_sync_cbs.end()) {
+                                it->second(j);
+                            }
                         }
-                        CINFO("CTX:%s reload config %s", MYARGS.CTXID.c_str(), j.dump().c_str());
                     } catch (const nlohmann::json::exception& e) {
                         CERROR("CTX:%s %s json exception %s", MYARGS.CTXID.c_str(), __FUNCTION__, e.what());
                     }
                 },
                 nullptr);
 
+            CApp::CommandRegister(m_command_sync_cbs);
             if (!CApp::Init()) {
                 CERROR("CTX:%s CApp::Init fail", MYARGS.CTXID.c_str());
                 return false;
@@ -94,7 +105,7 @@ class CApp {
             }
 
             for (auto& v : MYARGS.Workers[Id()].Host) {
-                auto [schema, url] = CConnection::GetRealUri(v);
+                auto [schema, host, port, path] = CConnection::SplitUri(v);
                 if (schema == "http" || schema == "https") {
                     m_http_server.push_back(std::make_shared<CHTTPServer>());
                     auto ref = m_http_server.back();
@@ -102,11 +113,11 @@ class CApp {
                         CERROR("CTX:%s HttpServer::Init %s", MYARGS.CTXID.c_str(), v.c_str());
                         continue;
                     }
-                    CApp::WebRegister(ref);
+                    CApp::WebRegister(this, ref);
                 } else if (schema == "tcp") {
                     m_tcp_server.push_back(std::make_shared<CTCPServer>());
                     auto ref = m_tcp_server.back();
-                    CApp::TcpRegister(url, ref);
+                    CApp::TcpRegister(this, v, ref);
                 }
             }
 
@@ -115,7 +126,6 @@ class CApp {
     };
 
     class AppService final : public CService {
-
     public:
         virtual bool Init() final
         {
@@ -125,7 +135,9 @@ class CApp {
                     return CNEW AppWorker();
                 },
                 nullptr,
-                nullptr,
+                [](std::string_view data) {
+                    CWorkerMgr::Instance().SendMsgToAllWorkers(CChannel::MsgType::Json, data);
+                },
                 nullptr);
 
             CheckCondition(CMongo::Instance().Init(MYARGS.MongoUrl.value()), false);
@@ -154,8 +166,9 @@ public:
     }
 
     static bool Init() { return true; }
-    static void WebRegister(std::shared_ptr<CHTTPServer> srv);
-    static void TcpRegister(const std::string host, std::shared_ptr<CTCPServer> srv);
+    static void WebRegister(CWorker* w, std::shared_ptr<CHTTPServer> srv);
+    static void TcpRegister(CWorker* w, const std::string host, std::shared_ptr<CTCPServer> srv);
+    static void CommandRegister(std::map<std::string, CommandSyncFunc>& ref);
 };
 
 NAMESPACE_FRAMEWORK_END

@@ -103,7 +103,6 @@ private:
 //全局默认的日志写入器
 inline thread_local LogWriter WARN_W;
 inline thread_local LogWriter INFO_W;
-inline thread_local LogWriter DBLOG_W;
 
 bool LogInit(std::optional<std::string_view> l,
     std::optional<std::string_view> modulename,

@@ -143,6 +143,9 @@ bool CArgument::ParseYaml()
     } else {
         TokenExpire = 10;
     }
+    if (config["main"] && config["main"].IsMap() && config["main"]["httptimeout"]) {
+        HttpTimeout = config["main"]["httptimeout"].as<uint32_t>();
+    }
 
     if (config["main"] && config["main"].IsMap() && config["main"]["hosts"] && config["main"]["hosts"].IsSequence()) {
         auto n = 1;
@@ -179,6 +182,8 @@ bool CArgument::ParseYaml()
         j["apikey"] = ApiKey.value();
     if (TokenExpire)
         j["tokenexpire"] = TokenExpire.value();
+    if (HttpTimeout)
+        j["httptimeout"] = HttpTimeout.value();
     if (RedisTTL)
         j["redisttl"] = RedisTTL.value();
     if (Http2Able)

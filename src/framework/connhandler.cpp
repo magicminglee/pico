@@ -46,7 +46,7 @@ bool CConnectionHandler::init(const int32_t fd, bufferevent_data_cb rcb, buffere
 
 bool CConnectionHandler::Connect(std::string host, std::optional<bool> ipv6)
 {
-    auto [schema, hostname, port] = CConnection::SplitUri(host);
+    auto [schema, hostname, port, path] = CConnection::SplitUri(host);
     CheckCondition(Init(-1, host), false);
     m_conn->m_host = host;
     m_conn->SetStreamTypeBySchema(schema);
@@ -62,24 +62,14 @@ void CConnectionHandler::Register(CReadCBFunc readcb, CWriteCBFunc writecb, CEve
 
 bool CConnectionHandler::Init(const int32_t fd, const std::string host)
 {
-    auto [schema, hostname, port] = CConnection::SplitUri(host);
+    auto [schema, hostname, port, path] = CConnection::SplitUri(host);
     SSL* ssl = nullptr;
     if (schema == "https" || schema == "wss") {
-        ssl = CSSLContex::Instance().CreateOneSSL();
+        ssl = CSSLContex::Instance().CreateOneSSL(fd > 0);
     }
     m_conn.reset(CNEW CConnection());
     m_conn->SetStreamTypeBySchema(schema);
     return CConnectionHandler::init(fd, onRead, onWrite, onError, ssl, fd > 0);
-}
-
-bool CConnectionHandler::SendXGameMsg(const uint16_t maincmd, const uint16_t subcmd, const std::string_view data)
-{
-    return m_conn->SendXGameMsg(maincmd, subcmd, data);
-}
-
-bool CConnectionHandler::ForwardMsg(const uint16_t maincmd, const uint16_t subcmd, const std::string_view data)
-{
-    return m_conn->ForwardMsg(maincmd, subcmd, data);
 }
 
 void CConnectionHandler::onRead(struct bufferevent* bev, void* arg)
@@ -94,27 +84,20 @@ void CConnectionHandler::onRead(struct bufferevent* bev, void* arg)
         CERROR("%p,%ld Buffer is overflow!", self, self->Connection()->Id());
         if (self->m_event_callback)
             self->m_event_callback(EnumConnEventType::EnumConnEventType_Closed);
-        self->m_write_callback();
         return;
     }
-    // while (len > 0 && len < MAX_WATERMARK_SIZE)
-    {
-        if (self->m_conn->IsStreamType(CConnection::StreamType::StreamType_Tcp)
-            || self->m_conn->IsStreamType(CConnection::StreamType::StreamType_Unix)
-            || self->m_conn->IsStreamType(CConnection::StreamType::StreamType_HTTPS)
-            || self->m_conn->IsStreamType(CConnection::StreamType::StreamType_Udp)) {
-            if (self->m_read_callback) {
-                auto data = (char*)evbuffer_pullup(input, -1);
-                auto dlen = evbuffer_get_length(input);
-                std::string_view sv(data, dlen);
-                auto readlen = self->m_read_callback(sv);
-                evbuffer_drain(input, readlen);
-                len = evbuffer_get_length(input);
-            }
+    if (self->m_read_callback) {
+        auto data = (char*)evbuffer_pullup(input, -1);
+        auto dlen = evbuffer_get_length(input);
+        std::string_view sv(data, dlen);
+        auto readlen = self->m_read_callback(sv);
+        if (readlen > 0) {
+            evbuffer_drain(input, readlen);
+        } else if (readlen == 0) {
         } else {
-            CERROR("CTX:%s %ld %lu not supported socket protocol type", MYARGS.CTXID.c_str(), self->Id(), len);
             if (self->m_event_callback)
                 self->m_event_callback(EnumConnEventType::EnumConnEventType_Closed);
+            CDEL(self);
         }
     }
 }
@@ -147,6 +130,7 @@ void CConnectionHandler::onError(struct bufferevent* bev, short which, void* arg
     CINFO("CTX:%s %s %p,%ld,0x%x,%p", MYARGS.CTXID.c_str(), __FUNCTION__, self->m_conn.get(), self->m_conn->Id(), which, bev);
     if (self->m_event_callback)
         self->m_event_callback(EnumConnEventType::EnumConnEventType_Closed);
+    CDEL(self);
 }
 
 NAMESPACE_FRAMEWORK_END

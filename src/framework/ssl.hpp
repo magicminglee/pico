@@ -13,10 +13,10 @@ public:
     bool Init();
     void Destroy();
     bool LoadCertificateAndPrivateKey(const std::string certificate_chain_file, const std::string privatekey_file);
-    SSL* CreateOneSSL();
-    SSL_CTX* Ctx();
+    SSL* CreateOneSSL(bool isserver);
 
 private:
-    SSL_CTX* m_ssl_ctx = { nullptr };
+    SSL_CTX* m_server_ssl_ctx = { nullptr };
+    SSL_CTX* m_client_ssl_ctx = { nullptr };
 };
 NAMESPACE_FRAMEWORK_END

@@ -101,12 +101,12 @@ struct bufferevent* CContex::Bvsocket(evutil_socket_t fd, bufferevent_data_cb rc
         return nullptr;
     }
     bufferevent_setcb(bv, rcb, wcb, ecb, arg);
-    if (-1 == bufferevent_enable(bv, EV_READ)) {
+    if (-1 == bufferevent_enable(bv, EV_READ | EV_WRITE)) {
         bufferevent_free(bv);
         return nullptr;
     }
 
-    bufferevent_setwatermark(bv, EV_READ, 0, MAX_WATERMARK_SIZE * 4);
+    bufferevent_setwatermark(bv, EV_READ | EV_WRITE, 0, MAX_WATERMARK_SIZE * 4);
     return bv;
 }
 

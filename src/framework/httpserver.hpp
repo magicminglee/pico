@@ -1,87 +1,51 @@
 #pragma once
 
 #include "common.hpp"
+#include "connection.hpp"
+#include "connhandler.hpp"
 #include "contex.hpp"
 #include "global.hpp"
+#include "httpmsg.hpp"
 #include "object.hpp"
+#include "tcpserver.hpp"
 #include "wsparser.hpp"
 
 #include "nghttp2/nghttp2.h"
 
+#include "picohttpparser/picohttpparser.h"
+
 NAMESPACE_FRAMEWORK_BEGIN
 
-namespace ghttp {
-enum class HttpStatusCode : int32_t {
-    SWITCH = 101, // Switching Protocols
-    OK = 200, // request completed ok
-    NOCONTENT = 204, // request does not have content
-    MOVEPERM = 301, // the uri moved permanently
-    MOVETEMP = 302, // the uri moved temporarily
-    NOTMODIFIED = 304, // page was not modified from last
-    BADREQUEST = 400, // invalid http request was made
-    UNAUTHORIZED = 401, // Unauthorized
-    FORBIDDEN = 403, // Forbidden
-    NOTFOUND = 404, // could not find content for uri
-    BADMETHOD = 405, // method not allowed for this uri
-    ENTITYTOOLARGE = 413, // Payload Too Large
-    EXPECTATIONFAILED = 417, // we can't handle this expectation
-    INTERNAL = 500, // internal error
-    NOTIMPLEMENTED = 501, // not implemented
-    BADGATEWAY = 502, // Bad Gateway
-    SERVUNAVAIL = 503, // the server is not available
-};
-enum class HttpMethod : uint32_t {
-    GET = 1 << 0,
-    POST = 1 << 1,
-    HEAD = 1 << 2,
-    PUT = 1 << 3,
-    DELETE = 1 << 4,
-    OPTIONS = 1 << 5,
-    TRACE = 1 << 6,
-    CONNECT = 1 << 7,
-    PATCH = 1 << 8
-};
-std::optional<const char*> HttpReason(HttpStatusCode code);
-class CRequest {
-public:
-    void SetUid(const int64_t uid);
-    std::optional<int64_t> GetUid() const;
-    std::optional<std::string_view> GetQueryByKey(const char* key) const;
-    std::optional<std::string_view> GetHeaderByKey(const char* key) const;
-    std::optional<std::string_view> GetRequestPath() const;
-    std::optional<std::string_view> GetRequestBody() const;
+class CHttpParser {
+    enum class EParserState : uint32_t {
+        EParserState_Begin = 0,
+        EParserState_Head = 1,
+        EParserState_Body = 2,
+        EParserState_End = 3,
+    };
 
 public:
-    std::optional<evkeyvalq*> qheaders;
-    std::optional<evkeyvalq*> headers;
-    std::optional<std::string_view> path;
-    std::optional<std::string_view> data;
-    std::optional<int64_t> uid;
-    struct evhttp_request* req = { nullptr };
+    ~CHttpParser();
+    bool IsHttp2() { return nullptr != m_session; }
+    int32_t ParseRequest(std::string_view data);
+    int32_t ParseResponse(std::string_view data);
+    ghttp::CRequest* GetRequest() { return m_req.get(); }
+    void SetRequest(ghttp::CRequest* req) { m_req.reset(req); }
+    ghttp::CResponse* GetResponse() { return m_rsp.get(); }
+    void SetResponse(ghttp::CResponse* rsp) { m_rsp.reset(rsp); }
+    void SetNgHttp2Session(nghttp2_session* session);
+
+private:
+    int32_t parseHttp1Request(std::string_view data);
+    int32_t parseHttp1Response(std::string_view data);
+    int32_t parseHttp2Request(std::string_view data);
+    int32_t parseHttp2Response(std::string_view data);
+    std::unique_ptr<ghttp::CRequest> m_req = { nullptr };
+    std::unique_ptr<ghttp::CResponse> m_rsp = { nullptr };
+    struct phr_chunked_decoder m_decoder = {};
+    EParserState m_state = { EParserState::EParserState_Begin };
+    nghttp2_session* m_session = { nullptr };
 };
-
-class CResponse {
-public:
-    bool Response(const std::pair<ghttp::HttpStatusCode, std::string>& res) const;
-    void AddHeader(const std::string& key, const std::string& val);
-    evhttp_connection* Conn() { return conn; }
-    std::optional<std::string_view> GetQueryByKey(const char* key) const;
-    std::optional<std::string_view> GetHeaderByKey(const char* key) const;
-    std::optional<ghttp::HttpStatusCode> GetResponseStatus() const;
-    std::optional<std::string_view> GetResponseBody() const;
-
-public:
-    std::optional<evkeyvalq*> qheaders;
-    std::optional<evkeyvalq*> headers;
-    std::optional<ghttp::HttpStatusCode> rspstatus;
-    std::optional<std::string_view> rspdata;
-    struct evhttp_connection* conn = { nullptr };
-    struct evhttp_request* req = { nullptr };
-};
-
-using HttpReqRspCallback = std::function<bool(CRequest*, CResponse*)>;
-using HttpRspCallback = std::function<bool(CResponse*)>;
-}
 
 class CWebSocket {
 public:
@@ -91,50 +55,16 @@ public:
     static bool Connect(const std::string& url, Callback cb);
 
 private:
-    CWebSocket(evhttp_connection* evconn);
+    CWebSocket(CConnection* evconn);
     ~CWebSocket();
     static void onRead(struct bufferevent* bev, void* arg);
     static void onWrite(struct bufferevent* bev, void* arg);
     static void onError(struct bufferevent* bev, short which, void* arg);
 
 private:
-    struct evhttp_connection* m_evconn = { nullptr };
+    CConnection* m_evcon = { nullptr };
     CWSParser m_parser;
     Callback m_rdfunc = { nullptr };
-};
-
-class CHTTP2SessionData {
-public:
-    struct CStreamData {
-        std::optional<std::string> RequestPath;
-        int32_t StreamId;
-    };
-    static CHTTP2SessionData* InitNghttp2SessionData(struct bufferevent* bev);
-    CHTTP2SessionData(struct bufferevent* bev);
-    ~CHTTP2SessionData();
-    ssize_t OnReceive(std::string_view data);
-    void OnWrite();
-    bool SendResponse(const CStreamData* stream, std::unordered_map<std::string, std::string> header, const int32_t fd);
-
-private:
-    static ssize_t sendCallback(nghttp2_session* session, const uint8_t* data, size_t length, int flags, void* user_data);
-    static int onFrameRecvCallback(nghttp2_session* session, const nghttp2_frame* frame, void* user_data);
-    static int onStreamCloseCallback(nghttp2_session* session, int32_t stream_id, uint32_t error_code, void* user_data);
-    static int onHeaderCallback(nghttp2_session* session,
-        const nghttp2_frame* frame, const uint8_t* name,
-        size_t namelen, const uint8_t* value,
-        size_t valuelen, uint8_t flags, void* user_data);
-    static int onBeginHeadersCallback(nghttp2_session* session, const nghttp2_frame* frame, void* user_data);
-    int onRequestRecv(CStreamData* stream_data);
-    bool sendServerConnectionHeader();
-    CStreamData* addStreamData(const int32_t streamid);
-    void removeStreamData(CStreamData*);
-    bool sessionSend();
-
-private:
-    struct bufferevent* m_bev = { nullptr };
-    nghttp2_session* m_session = { nullptr };
-    std::map<int32_t, CStreamData*> m_streams;
 };
 
 class CHTTPServer : public CObject {
@@ -144,8 +74,7 @@ public:
     struct FilterData {
         ghttp::HttpMethod cmd;
         ghttp::HttpReqRspCallback cb;
-        std::unordered_map<std::string, std::string> h;
-        CHTTPServer* self;
+        std::unordered_map<std::string, std::string> header;
     };
 
 public:
@@ -157,39 +86,77 @@ public:
     bool Register(const std::string path, ghttp::HttpMethod cmd, ghttp::HttpReqRspCallback cb);
     bool Register(const std::string path, FilterData rd);
     bool RegEvent(std::string ename, std::function<HttpEventType> cb);
+    bool Emit(const std::string path, ghttp::CRequest* req, ghttp::CResponse* rsp);
+    std::optional<std::pair<ghttp::HttpStatusCode, std::string>> EmitEvent(std::string ename, ghttp::CRequest* req, ghttp::CResponse* rsp);
+    std::optional<FilterData*> GetFilter(const std::string& path);
 
 private:
-    std::optional<std::pair<ghttp::HttpStatusCode, std::string>> EmitEvent(std::string ename, ghttp::CRequest* req, ghttp::CResponse* rsp);
-    static bufferevent* onConnected(struct event_base*, void*);
     bool setOption(const int32_t fd);
     void destroy();
-    static void onBindCallback(evhttp_request* req, void* arg);
 
 private:
-    evhttp* m_http = nullptr;
-    bool m_ishttps = false;
+    CTCPServer m_tcpserver;
     std::unordered_map<std::string, FilterData> m_callbacks;
     std::unordered_map<std::string, std::function<HttpEventType>> m_ev_callbacks;
 };
 
 class CHTTPClient {
-    typedef void (*HttpHandleCallbackFunc)(struct evhttp_request* req, void* arg);
-
 public:
-    static bool Get(std::string_view url, ghttp::HttpRspCallback cb);
-    static bool Post(std::string_view url, ghttp::HttpRspCallback cb, std::optional<std::string_view> data);
-
+    ~CHTTPClient();
     static std::optional<CHTTPClient*> Emit(std::string_view url,
         ghttp::HttpRspCallback cb,
-        ghttp::HttpMethod cmd = ghttp::HttpMethod::GET,
-        std::optional<std::string_view> data = std::nullopt,
+        ghttp::HttpMethod method = ghttp::HttpMethod::GET,
+        std::optional<std::string> body = std::nullopt,
         std::map<std::string, std::string> headers = {});
 
+public:
+    bool Request();
+    void Response();
+    void Init(CConnection* conn, CHTTPServer* server);
+    CHttpParser& GetParser() { return m_parser; }
+    void SetConnection(CConnection* conn) { m_evcon = conn; }
+    CConnection* GetConnection() { return m_evcon; }
+    void SetHttpServer(CHTTPServer* server) { m_httpserver = server; };
+    bool IsHttp2() { return nullptr != m_session; }
+    const std::string& GetURL() { return m_url; }
+
+    // HTTP2 Api
+    bool CheckHttp2();
+    bool InitNghttp2SessionData();
+    bool SendResponse(ghttp::CRequest* req, const ghttp::HttpStatusCode status, std::unordered_map<std::string, std::string> header, std::optional<std::string_view> data);
+    static void OnWrite(CHTTPClient* hclient);
+    nghttp2_session* GetNGHttp2Session() { return m_session; }
+
 private:
-    bool request(const char* url, const uint32_t cmd, std::optional<std::string_view> data, std::optional<std::map<std::string, std::string>> headers, HttpHandleCallbackFunc cb);
-    static void delegateCallback(struct evhttp_request* req, void* arg);
+    static ssize_t onDataSourceReadCallback(nghttp2_session* session, int32_t stream_id, uint8_t* buf, size_t length, uint32_t* data_flags, nghttp2_data_source* source, void* user_data);
+    static ssize_t sendCallback(nghttp2_session* session, const uint8_t* data, size_t length, int flags, void* user_data);
+    static int onFrameRecvCallback(nghttp2_session* session, const nghttp2_frame* frame, void* user_data);
+    static int onStreamCloseCallback(nghttp2_session* session, int32_t stream_id, uint32_t error_code, void* user_data);
+    static int onHeaderCallback(nghttp2_session* session,
+        const nghttp2_frame* frame, const uint8_t* name,
+        size_t namelen, const uint8_t* value,
+        size_t valuelen, uint8_t flags, void* user_data);
+    static int onDataChunkRecvCallback(nghttp2_session* session,
+        uint8_t flags, int32_t stream_id, const uint8_t* data, size_t len, void* user_data);
+    static int onBeginHeadersCallback(nghttp2_session* session, const nghttp2_frame* frame, void* user_data);
+    static int onBeforeFrameSendCallback(nghttp2_session* session, const nghttp2_frame* frame, void* user_data);
+    int onRequestRecv(ghttp::CRequest* req);
+    void removeStreamData(ghttp::CRequest* s);
+    bool sendFile(ghttp::CRequest* stream_data,
+        const ghttp::HttpStatusCode status, std::unordered_map<std::string, std::string> header, const int32_t fd);
+    bool sessionSend();
+    bool sendConnectionHeader();
+    bool submitRequest();
+    bool isPassive() { return nullptr == m_callback; }
+    std::map<std::string, std::string> getHttp2Header();
+
+private:
     ghttp::HttpRspCallback m_callback = { nullptr };
-    struct evhttp_connection* m_evconn = { nullptr };
+    CConnection* m_evcon = { nullptr };
+    nghttp2_session* m_session = { nullptr };
+    CHttpParser m_parser;
+    std::string m_url;
+    CHTTPServer* m_httpserver = { nullptr };
 };
 
 NAMESPACE_FRAMEWORK_END

@@ -35,7 +35,7 @@ bool CUDPServer::Init(std::string host, std::function<void(const std::string_vie
     if (-1 != m_listenfd)
         return true;
 
-    auto [schema, hostname, port] = CConnection::SplitUri(host);
+    auto [schema, hostname, port, path] = CConnection::SplitUri(host);
     struct addrinfo hints;
     struct addrinfo *result = nullptr, *rp = nullptr;
     memset(&hints, 0, sizeof(hints));

@@ -1,5 +1,6 @@
 #include "connection.hpp"
 #include "connhandler.hpp"
+#include "contex.hpp"
 #include "encoder.hpp"
 #include "ssl.hpp"
 #include "utils.hpp"
@@ -8,69 +9,55 @@
 NAMESPACE_FRAMEWORK_BEGIN
 
 auto CConnection::SplitUri(const std::string& uri)
-    -> std::tuple<std::string, std::string, std::string>
+    -> std::tuple<std::string, std::string, std::string, std::string>
 {
-    auto pos = uri.find("://");
-    if (pos == std::string::npos) {
+    evhttp_uri* evuri = evhttp_uri_parse_with_flags(uri.c_str(), 0);
+    if (!evuri) {
         CERROR("invalid URI: no scheme %s", uri.c_str());
+        return std::make_tuple("", "", "", "");
     }
+    std::string host = evhttp_uri_get_host(evuri);
+    std::transform(host.begin(), host.end(), host.begin(), ::tolower);
+    std::string path = evhttp_uri_get_path(evuri);
+    std::transform(path.begin(), path.end(), path.begin(), ::tolower);
+    int32_t tmpport = evhttp_uri_get_port(evuri);
+    std::string scheme = evhttp_uri_get_scheme(evuri);
+    std::transform(scheme.begin(), scheme.end(), scheme.begin(), ::tolower);
+    evhttp_uri_free(evuri);
 
-    auto type = uri.substr(0, pos);
-    std::transform(type.begin(), type.end(), type.begin(), ::tolower);
-
-    auto start = pos + 3;
-    pos = uri.find(":", start);
-    if (pos == std::string::npos) {
-        // Set the default port.
-        std::string port = "80";
-        if (type == "https" || type == "wss")
+    // Set the default port.
+    std::string port;
+    if (tmpport == -1) {
+        if (scheme == "https" || scheme == "wss")
             port = "443";
-        pos = uri.find("/", start);
-        return std::make_tuple(type, uri.substr(start, pos - start), port);
+        else
+            port = "80";
+    } else {
+        port = std::to_string(tmpport);
     }
 
-    auto hostname = uri.substr(start, pos - start);
-
-    return std::make_tuple(type, hostname, uri.substr(pos + 1));
-}
-
-std::tuple<std::string, std::string> CConnection::GetRealUri(const std::string& uri)
-{
-    auto [s, host, port] = CConnection::SplitUri(uri);
-    std::string schema = s, url = uri;
-    if (auto pos = uri.find("->"); pos != std::string::npos) {
-        schema = uri.substr(0, pos);
-        url = uri.substr(pos + 2, schema.size() - (pos + 2));
-    }
-    return std::make_tuple(schema, url);
+    return std::make_tuple(scheme, host, port, path);
 }
 
 void CConnection::SetStreamTypeBySchema(const std::string& schema)
 {
     static std::map<const std::string, StreamType> STREAMMAP = {
-        { "raw", StreamType::StreamType_Raw },
+        { "http", StreamType::StreamType_Http },
+        { "https", StreamType::StreamType_Http },
+        { "ws", StreamType::StreamType_Http },
+        { "wss", StreamType::StreamType_Http },
         { "haproxy", StreamType::StreamType_HAProxy },
         { "tcp", StreamType::StreamType_Tcp },
         { "udp", StreamType::StreamType_Udp },
         { "unix", StreamType::StreamType_Unix },
-        { "https", StreamType::StreamType_HTTPS },
     };
     m_schema = schema;
     m_st = STREAMMAP[m_schema];
 }
 
-void CConnection::ShellProxy()
-{
-    auto [schema, hostname, port] = CConnection::SplitUri(m_host);
-    if (auto pos = schema.find("->"); pos != std::string::npos) {
-        schema = m_host.substr(pos + 2, schema.size() - (pos + 2));
-        SetStreamTypeBySchema(schema);
-    }
-}
-
 CConnection::CConnection()
 {
-    CINFO("new cconnection %p", this);
+    CDEBUG("new cconnection %p", this);
 }
 
 CConnection::~CConnection()
@@ -79,7 +66,7 @@ CConnection::~CConnection()
         bufferevent_free(m_bev);
         m_bev = nullptr;
     }
-    CINFO("free cconnection %p", this);
+    CDEBUG("free cconnection %p", this);
 }
 
 bool CConnection::IsClosing()
@@ -101,18 +88,12 @@ bool CConnection::SendCmd(const void* data, const uint32_t dlen)
     return -1 != evbuffer_add(output, data, dlen);
 }
 
-bool CConnection::SendXGameMsg(const uint16_t maincmd, const uint16_t subcmd, const std::string_view data)
+bool CConnection::SendFile(const int32_t fd)
 {
-    CEncoder<XGAMEExternalHeader> enc;
-    auto endata = enc.Encode(maincmd, subcmd, data.data(), data.size(), 0);
-    return endata ? SendCmd(endata.value().data(), endata.value().size()) : false;
-}
-
-bool CConnection::ForwardMsg(const uint16_t maincmd, const uint16_t subcmd, const std::string_view data, const int64_t linkid)
-{
-    CEncoder<XGAMEInternalHeader> enc;
-    auto endata = enc.Encode(0, maincmd, subcmd, linkid, 0, data.data(), data.size());
-    return endata ? SendCmd(endata.value().data(), endata.value().size()) : false;
+    CheckCondition(m_bev, false);
+    struct evbuffer* output = bufferevent_get_output(m_bev);
+    CheckCondition(output, false);
+    return -1 != evbuffer_add_file(output, fd, 0, -1);
 }
 
 ///////////////////////////////////////////////////////////////////End CConnection////////////////////////////////////////////////////////////////

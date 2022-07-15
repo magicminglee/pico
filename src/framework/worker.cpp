@@ -105,7 +105,7 @@ bool CWorker::Init()
 
 bool CWorker::SendMsgToMain(const CChannel::MsgType type, std::string_view data)
 {
-    return m_main_and_work_chan.WriteL(type, std::move(data));
+    return m_main_and_work_chan.WriteL(type, data);
 }
 
 void CWorker::initOk()
@@ -128,6 +128,7 @@ CWorker* CWorkerMgr::Create(const uint64_t total)
     m_mgr.emplace_back().reset(m_create_func());
 
     CWorker* w = m_mgr.back().get();
+    w->OnRightEvent(m_textcb, m_jsoncb, m_binarycb);
 
     if (!w->m_main_and_work_chan.Create())
         return nullptr;
@@ -154,9 +155,9 @@ bool CWorkerMgr::Register(
 {
     if (!m_create_func) {
         m_create_func = std::move(createcb);
-        for (auto&& w : m_mgr) {
-            w->OnRightEvent(std::move(textcb), std::move(jsoncb), std::move(binarycb));
-        }
+        m_textcb = textcb;
+        m_jsoncb = jsoncb;
+        m_binarycb = binarycb;
     }
     return true;
 }

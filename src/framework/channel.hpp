@@ -70,13 +70,13 @@ public:
     bool WriteR(const MsgType type, std::string_view data)
     {
         CheckCondition(IsValid(), false);
-        return write(false, type, std::move(data));
+        return write(false, type, data);
     }
 
     bool WriteL(const MsgType type, std::string_view data)
     {
         CheckCondition(IsValid(), false);
-        return write(true, type, std::move(data));
+        return write(true, type, data);
     }
 
     std::tuple<std::optional<MsgType>, std::optional<std::string_view>> ReadR()

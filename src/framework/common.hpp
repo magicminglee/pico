@@ -17,11 +17,13 @@
 #include <string_view>
 #include <thread>
 #include <unordered_map>
+#include <filesystem>
 
 #if defined(LINUX_PLATFORMOS) || defined(DARWIN_PLATFORMOS)
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <fcntl.h>
+#include <unistd.h>
 #endif
 
 #ifndef PLATFORMOS

@@ -10,7 +10,7 @@ enum class EnumConnEventType : uint16_t {
     EnumConnEventType_Connected = 1,
     EnumConnEventType_Closed = 2,
 };
-using CReadCBFunc = std::function<size_t(std::string_view)>;
+using CReadCBFunc = std::function<int32_t(std::string_view)>;
 using CEventCBFunc = std::function<void(const EnumConnEventType)>;
 using CWriteCBFunc = std::function<void()>;
 
@@ -22,6 +22,9 @@ private:
     std::unique_ptr<CConnection> m_conn = { nullptr };
 
     bool init(const int32_t fd, bufferevent_data_cb rcb, bufferevent_data_cb wcb, bufferevent_event_cb ecb, SSL* ssl, bool accept);
+    static void onRead(struct bufferevent* bev, void* arg);
+    static void onWrite(struct bufferevent* bev, void* arg);
+    static void onError(struct bufferevent* bev, short which, void* arg);
 
 public:
     CConnectionHandler() = default;
@@ -30,15 +33,6 @@ public:
     bool Init(const int32_t fd, const std::string host);
     bool Connect(std::string host, std::optional<bool> ipv6 = std::nullopt);
     CConnection* Connection() { return m_conn.get(); }
-    bool SendXGameMsg(const uint16_t maincmd, const uint16_t subcmd, const std::string_view data);
-    bool ForwardMsg(const uint16_t maincmd, const uint16_t subcmd, const std::string_view data);
-
-    static void onRead(struct bufferevent* bev, void* arg);
-    static void onWrite(struct bufferevent* bev, void* arg);
-    static void onError(struct bufferevent* bev, short which, void* arg);
-
-    // debug
-    void* H2Session = { nullptr };
 };
 
 NAMESPACE_FRAMEWORK_END

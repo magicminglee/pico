@@ -70,6 +70,9 @@ private:
     using WT = std::vector<std::unique_ptr<CWorker>>;
     WT m_mgr;
     std::function<CWorker*()> m_create_func = { nullptr };
+    std::function<void(std::string_view)> m_textcb = { nullptr };
+    std::function<void(std::string_view)> m_jsoncb = { nullptr };
+    std::function<void(std::string_view)> m_binarycb = { nullptr };
 
     DISABLE_CLASS_COPYABLE(CWorkerMgr);
 };
