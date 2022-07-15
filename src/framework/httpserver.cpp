@@ -428,7 +428,7 @@ bool CHTTPServer::ListenAndServe(std::string host)
             [hclient]() {
                 CHTTPClient::OnWrite(hclient);
             },
-            [this, hclient](const EnumConnEventType e) {
+            [hclient](const EnumConnEventType e) {
                 if (e == EnumConnEventType::EnumConnEventType_Connected) {
                     auto ish2 = hclient->CheckHttp2();
                     if (ish2) {

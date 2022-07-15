@@ -15,6 +15,7 @@ src/external/sasl2/
 src/external/clickhousecxx/
 src/external/jwt-cpp/
 src/external/nghttp2/
+src/external/phr/
 __pycache__
 *_pb2.py
 .vscode
