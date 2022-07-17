@@ -24,6 +24,7 @@ FMT_INSTALL_PATH="${INSTALL_ROOT_DIR_PATH}""/fmt/"
 CLICKHOUSE_INSTALL_PATH="${INSTALL_ROOT_DIR_PATH}""/clickhousecxx/"
 JWTCPP_INSTALL_PATH="${INSTALL_ROOT_DIR_PATH}""/jwt-cpp/"
 NGHTTP2_INSTALL_PATH="${INSTALL_ROOT_DIR_PATH}""/nghttp2/"
+LLHTTP_INSTALL_PATH="${INSTALL_ROOT_DIR_PATH}""/llhttp/"
 
 #openssl
 rm -rf ${OPENSSL_INSTALL_PATH}
@@ -165,6 +166,15 @@ make -j4
 make install
 cd ${ROOT_DIR_PATH}
 rm -rf nghttp2-1.48.0
+
+rm -rf ${LLHTTP_INSTALL_PATH}
+tar xvzf llhttp-release-v6.0.5.tar.gz
+cd llhttp-release-v6.0.5
+cmake -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX=${LLHTTP_INSTALL_PATH} -H. -Bbuild
+cd build
+make -j4 && make install
+cd ${LLHTTP_INSTALL_PATH}
+rm -rf llhttp-release-v6.0.5
 
 #clickhouse
 #tar xvzf clickhouse-cpp-2.1.0.tar.gz
