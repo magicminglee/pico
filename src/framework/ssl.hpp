@@ -12,11 +12,15 @@ public:
     ~CSSLContex() = default;
     bool Init();
     void Destroy();
-    bool LoadCertificateAndPrivateKey(const std::string certificate_chain_file, const std::string privatekey_file);
-    SSL* CreateOneSSL(bool isserver);
+    SSL_CTX* LoadCertificateAndPrivateKey(const std::string certificate_chain_file, const std::string privatekey_file);
+    SSL* CreateOneSSL(const bool isserver, const std::string& hostname);
 
 private:
-    SSL_CTX* m_server_ssl_ctx = { nullptr };
-    SSL_CTX* m_client_ssl_ctx = { nullptr };
+    static int tlsext_servername_cb(SSL* s, int* al, void* arg);
+
+private:
+    bool m_is_init = { false };
+    std::map<std::string, SSL_CTX*> m_server_ssl_ctx;
+    SSL_CTX* m_client_ssl_ctx;
 };
 NAMESPACE_FRAMEWORK_END

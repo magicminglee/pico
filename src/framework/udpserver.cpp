@@ -20,7 +20,7 @@ CUDPServer::CUDPServer(CUDPServer&& rhs)
 void CUDPServer::destroy()
 {
     if (nullptr != m_ev) {
-        CWorker::MAIN_CONTEX->UnRegister(m_ev);
+        CContex::MAIN_CONTEX->UnRegister(m_ev);
         m_ev = nullptr;
     }
     if (m_listenfd > 0) {
@@ -75,7 +75,7 @@ bool CUDPServer::Init(std::string host, std::function<void(const std::string_vie
     }
 
     m_read_callback = std::move(cb);
-    if (m_ev = CWorker::MAIN_CONTEX->Register(
+    if (m_ev = CContex::MAIN_CONTEX->Register(
             m_listenfd,
             EV_READ | EV_PERSIST,
             nullptr,

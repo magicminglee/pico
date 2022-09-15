@@ -4,6 +4,8 @@
 #include <ratio>
 #include <sstream>
 
+#include "fmt/chrono.h"
+
 NAMESPACE_FRAMEWORK_BEGIN
 
 using namespace std::chrono;
@@ -48,15 +50,32 @@ public:
         return std::mktime(&tm);
     }
 
+    static struct tm* GMTime(const time_t* clock, struct tm* result)
+    {
+        if (nullptr == result)
+            return nullptr;
+        int64_t ns;
+        if (!clock) {
+            ns = NowSec();
+        } else {
+            ns = *clock;
+        }
+        *result = fmt::gmtime(ns);
+        return result;
+    }
+
     static struct tm* LocalTime(const time_t* clock, struct tm* result)
     {
         if (nullptr == result)
             return nullptr;
-#ifdef WINDOWS_PLATFORMOS
-        return 0 == localtime_s(result, clock) ? result : nullptr;
-#else
-        return localtime_r(clock, result);
-#endif
+        int64_t ns;
+        if (!clock) {
+            ns = NowSec();
+        } else {
+            ns = *clock;
+        }
+        *result = fmt::localtime(ns);
+        return result;
     }
 
     static char* AscTime(const struct tm* clock, char* result, size_t len)

@@ -1,9 +1,12 @@
 #include "httpmsg.hpp"
 #include "argument.hpp"
+#include "chrono.hpp"
 #include "httpserver.hpp"
 #include "stringtool.hpp"
+#include "xlog.hpp"
 
-#include <fmt/core.h>
+#include "fmt/chrono.h"
+#include "fmt/core.h"
 
 namespace fs = std::filesystem;
 NAMESPACE_FRAMEWORK_BEGIN
@@ -234,7 +237,6 @@ static const std::map<HttpMethod, std::string> HTTPMETHOD = {
     { HttpMethod::OPTIONS, "OPTIONS" },
     { HttpMethod::TRACE, "TRACE" },
     { HttpMethod::CONNECT, "CONNECT" },
-    { HttpMethod::PATCH, "PATCH" },
 };
 
 static const std::map<std::string, HttpMethod> HTTP_STR_METHOD = {
@@ -246,7 +248,6 @@ static const std::map<std::string, HttpMethod> HTTP_STR_METHOD = {
     { "OPTIONS", HttpMethod::OPTIONS },
     { "TRACE", HttpMethod::TRACE },
     { "CONNECT", HttpMethod::CONNECT },
-    { "PATCH", HttpMethod::PATCH },
 };
 
 std::optional<const char*> HttpReason(HttpStatusCode code)
@@ -279,20 +280,40 @@ std::optional<std::string> GetMiMe(const std::string& m)
     return std::nullopt;
 }
 
+std::string GetHttpDate()
+{
+    struct tm t;
+    CChrono::GMTime(nullptr, &t);
+    return fmt::format("{:%a, %d %b %Y %H:%M:%S GMT}", t);
+}
+
+std::string GetHttpServer()
+{
+    return fmt::format("PICO-v{}.{}", MAJOR, MINOR);
+}
+static const std::string NULLSTR = "";
 ///////////////////////////////////////////////////////////////CRequest////////////////////////////////////////////////////////
+CRequest::CRequest(CHTTPClient* con)
+    : con(con)
+{
+}
+
 void CRequest::Reset()
 {
     qheaders.clear();
     headers.clear();
-    path = std::nullopt;
-    body = std::nullopt;
+    path.clear();
+    body.clear();
+    scheme.clear();
+    host.clear();
+    port.clear();
     uid = std::nullopt;
-    method = HttpMethod::HEAD;
+    method = HttpMethod::DISABLE;
 }
 
 CRequest* CRequest::Clone()
 {
-    CRequest* self = CNEW CRequest();
+    CRequest* self = CNEW CRequest(con);
     *self = *this;
     return self;
 }
@@ -302,21 +323,35 @@ void CRequest::SetUid(const int64_t uid)
     this->uid = uid;
 }
 
-std::optional<std::string> CRequest::GetQueryByKey(const std::string& key) const
+const std::string& CRequest::GetQueryByKey(const std::string& key) const
 {
     auto it = qheaders.find(key);
-    return it != qheaders.end() ? std::make_optional(it->second) : std::nullopt;
+    return it != qheaders.end() ? it->second : NULLSTR;
 }
 
-std::optional<std::string> CRequest::GetHeaderByKey(const std::string& key) const
+const std::string& CRequest::GetHeaderByKey(const std::string& key) const
 {
     auto it = headers.find(key);
-    return it != headers.end() ? std::make_optional(it->second) : std::nullopt;
+    return it != headers.end() ? it->second : NULLSTR;
+}
+
+void CRequest::ClearHeader()
+{
+    headers.clear();
 }
 
 void CRequest::AddHeader(const std::string& key, const std::string& val)
 {
-    headers[CStringTool::ToLower(key)] = val;
+    if (!key.empty()) {
+        headers[CStringTool::ToLower(key)] = val;
+    } else {
+        for (auto& [k, v] : headers) {
+            if (v.empty()) {
+                headers[k] = val;
+                break;
+            }
+        }
+    }
 }
 
 bool CRequest::HasHeader(const std::string& key) const
@@ -327,9 +362,16 @@ bool CRequest::HasHeader(const std::string& key) const
 
 void CRequest::AppendBody(std::string_view body)
 {
+    if (!body.empty())
+        this->body.append(body.data(), body.length());
 }
 
 void CRequest::SetBody(const std::string& body)
+{
+    this->body = body;
+}
+
+void CRequest::SetBodyByView(std::string_view body)
 {
     this->body = body;
 }
@@ -376,6 +418,30 @@ void CRequest::SetFd(const int32_t fd)
     this->fd = fd;
 }
 
+void CRequest::SetMajor(uint8_t major)
+{
+    this->major = major;
+}
+
+void CRequest::SetMinor(uint8_t minor)
+{
+    this->minor = minor;
+}
+
+const std::string& CRequest::GetConnectionHeader()
+{
+    static const std::string connection_close = "close";
+    static const std::string connection_keepalive = "keep-alive";
+    if (1 == major && minor < 1)
+        return GetHeaderByKey("connection").empty() ? connection_close : GetHeaderByKey("connection");
+    return GetHeaderByKey("connection").empty() ? connection_keepalive : GetHeaderByKey("connection");
+}
+
+bool CRequest::IsGRPC()
+{
+    return 0 == GetHeaderByKey("content-type").find("application/grpc");
+}
+
 std::string CRequest::DebugStr()
 {
     std::string h, debugstr;
@@ -384,7 +450,7 @@ std::string CRequest::DebugStr()
     }
     return fmt::format("method:{} path:{} header:{} body:{}",
         HttpMethodStr(method).value_or(""),
-        path.value_or(""), h, body.value_or(""));
+        path, h, body);
 }
 
 ///////////////////////////////////////////////////////////////CResponse////////////////////////////////////////////////////////
@@ -408,16 +474,16 @@ CResponse* CResponse::Clone()
     return self;
 }
 
-std::optional<std::string> CResponse::GetQueryByKey(const std::string& key) const
+const std::string& CResponse::GetQueryByKey(const std::string& key) const
 {
     auto it = qheaders.find(key);
-    return it != qheaders.end() ? std::make_optional(it->second) : std::nullopt;
+    return it != qheaders.end() ? it->second : NULLSTR;
 }
 
-std::optional<std::string> CResponse::GetHeaderByKey(const std::string& key) const
+const std::string& CResponse::GetHeaderByKey(const std::string& key) const
 {
     auto it = headers.find(key);
-    return it != headers.end() ? std::make_optional(it->second) : std::nullopt;
+    return it != headers.end() ? it->second : NULLSTR;
 }
 
 bool CResponse::HasHeader(const std::string& key) const
@@ -436,24 +502,53 @@ void CResponse::SetStatus(std::optional<HttpStatusCode> status)
     this->status = status;
 }
 
-void CResponse::AppendBody(std::string_view)
+void CResponse::AppendBody(std::string_view body)
 {
+    if (this->body)
+        this->body.value().append(body.data(), body.length());
+    else
+        this->body = std::string(body.data(), body.length());
+}
+
+void CResponse::SetMajor(uint8_t major)
+{
+    this->major = major;
+}
+
+void CResponse::SetMinor(uint8_t minor)
+{
+    this->minor = minor;
+}
+
+void CResponse::SetStreamId(const int32_t streamid)
+{
+    this->streamid = streamid;
 }
 
 bool CResponse::Response(const std::pair<HttpStatusCode, std::string>& res)
 {
     if (!Conn()->IsHttp2()) {
+        const auto& contenttype = Conn()->GetStream(-1).value()->GetRequest()->GetHeaderByKey("content-type");
         std::string httprsp = fmt::format("HTTP/1.1 {} {}\r\n", (int32_t)res.first, HttpReason(res.first).value_or(""));
         for (auto& [k, v] : headers) {
             httprsp += fmt::format("{}: {}\r\n", k, v);
         }
-        httprsp += fmt::format("Content-Length: {}\r\n", res.second.size());
+        httprsp += fmt::format("date: {}\r\n", GetHttpDate());
+        httprsp += fmt::format("server: {}\r\n", GetHttpServer());
+        httprsp += fmt::format("connection: {}\r\n", Conn()->GetStream(-1).value()->GetRequest()->GetConnectionHeader());
+        httprsp += fmt::format("content-type: {}\r\n", contenttype.empty() ? "application/json; charset=utf-8" : contenttype);
+        httprsp += fmt::format("content-length: {}\r\n", res.second.size());
         httprsp += fmt::format("\r\n");
-        if (!res.second.empty())
+        if (!res.second.empty()) {
             httprsp.append(res.second);
+            SetBody(res.second);
+        }
         return Conn()->GetConnection()->SendCmd(httprsp.data(), httprsp.size());
     } else {
-        return Conn()->SendResponse(Conn()->GetParser().GetRequest(), res.first, {}, res.second);
+        if (!res.second.empty()) {
+            SetBody(res.second);
+        }
+        return Conn()->H2Response(Conn()->GetStream(streamid.value_or(-1)).value()->GetRequest(), res.first, {}, GetBody());
     }
 }
 
@@ -463,8 +558,8 @@ bool CResponse::SendFile(const std::string& filename)
     if (!fs::exists(f)) {
         return Response({ HttpStatusCode::NOTFOUND, HttpReason(HttpStatusCode::NOTFOUND).value_or("") });
     } else {
-        auto it = MIME.find(f.extension());
-        if (it == std::end(MIME)) {
+        auto mime = GetMiMe(f.extension());
+        if (!mime) {
             return Response({ HttpStatusCode::NOTFOUND, HttpReason(HttpStatusCode::NOTFOUND).value_or("") });
         } else {
             auto hfd = fopen(f.c_str(), "r");
@@ -473,7 +568,13 @@ bool CResponse::SendFile(const std::string& filename)
                 for (auto& [k, v] : headers) {
                     httprsp += fmt::format("{}: {}\r\n", k, v);
                 }
-                httprsp += fmt::format("Content-Length: {}\r\n", fs::file_size(f));
+                httprsp += fmt::format("date: {}\r\n", GetHttpDate());
+                httprsp += fmt::format("server: {}\r\n", GetHttpServer());
+                httprsp += fmt::format("content-type: {}\r\n", mime.value());
+                httprsp += fmt::format("content-length: {}\r\n", fs::file_size(f));
+                httprsp += fmt::format("connection: {}\r\n", Conn()->GetStream(-1).value()->GetRequest()->GetConnectionHeader());
+                if (MYARGS.IsAllowOrigin && MYARGS.IsAllowOrigin.value())
+                    httprsp += fmt::format("access-control-allow-origin: {}\r\n", "*");
                 httprsp += fmt::format("\r\n");
                 Conn()->GetConnection()->SendCmd(httprsp.data(), httprsp.size());
                 return Conn()->GetConnection()->SendFile(fileno(hfd));
@@ -487,7 +588,21 @@ bool CResponse::SendFile(const std::string& filename)
 
 void CResponse::AddHeader(const std::string& key, const std::string& val)
 {
-    headers[CStringTool::ToLower(key)] = val;
+    if (!key.empty()) {
+        headers[CStringTool::ToLower(key)] = val;
+    } else {
+        for (auto& [k, v] : headers) {
+            if (v.empty()) {
+                headers[k] = val;
+                break;
+            }
+        }
+    }
+}
+
+bool CResponse::IsGRPC()
+{
+    return 0 == GetHeaderByKey("content-type").find("application/grpc");
 }
 
 std::string CResponse::DebugStr()
@@ -500,6 +615,69 @@ std::string CResponse::DebugStr()
         HttpReason(status.value_or(HttpStatusCode::INTERNAL)).value_or(""),
         h, body.value_or(""));
 }
+
+void CHttpParser::Reset()
+{
+    llhttp_reset(&m_parser);
+}
+
+int32_t CHttpParser::ParseHttpMsg(CHTTPClient* session, std::string_view data)
+{
+    return session->IsHttp2() ? parseHttp2Msg(session, data) : parseHttp1Msg(session, data);
+}
+
+int32_t CHttpParser::parseHttp1Msg(CHTTPClient* session, std::string_view data)
+{
+    enum llhttp_errno err = HPE_OK;
+    if (data.empty()) {
+        if (llhttp_message_needs_eof(&m_parser)) {
+            err = llhttp_finish(&m_parser);
+            if (HPE_OK == err) {
+                return 0;
+            } else {
+                SPDLOG_ERROR("Parse error: {} {}", llhttp_errno_name(err), m_parser.reason);
+                return -1;
+            }
+        } else {
+            return 0;
+        }
+    }
+    auto datalen = data.length();
+    err = llhttp_execute(&m_parser, data.data(), datalen);
+    if (err == HPE_OK) {
+    } else {
+        if (err == HPE_PAUSED_UPGRADE) {
+            session->OnWebsocket();
+            llhttp_resume_after_upgrade(&m_parser);
+        } else if (err == HPE_PAUSED) {
+            llhttp_resume(&m_parser);
+        } else if (err == HPE_PAUSED_H2_UPGRADE) {
+            SPDLOG_INFO("http1 upgrade to http2");
+            session->InitNghttp2SessionData();
+            return 0;
+        } else {
+            SPDLOG_ERROR("Parse error: {} {}", llhttp_errno_name(err), m_parser.reason);
+            return -1;
+        }
+    }
+    return datalen;
+}
+
+int32_t CHttpParser::parseHttp2Msg(CHTTPClient* session, std::string_view data)
+{
+    ssize_t readlen = nghttp2_session_mem_recv(session->GetNGHttp2Session(), (const uint8_t*)data.data(), data.length());
+    if (readlen < 0) {
+        SPDLOG_ERROR("Fatal error: {}", nghttp2_strerror((int)readlen));
+        return -1;
+    }
+
+    int32_t rv = nghttp2_session_send(session->GetNGHttp2Session());
+    if (rv != 0) {
+        SPDLOG_ERROR("Fatal error: {}", nghttp2_strerror(rv));
+        return -1;
+    }
+    return readlen;
+};
 
 } // end namespace ghttp
 

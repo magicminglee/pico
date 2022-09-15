@@ -23,10 +23,10 @@ void CEvent::callback(evutil_socket_t fd, short which, void* arg)
     }
 }
 
-CEvent* CEvent::Create(event_base* base, evutil_socket_t fd, short flags, std::function<void()> func)
+CEvent* CEvent::Create(evutil_socket_t fd, short flags, std::function<void()> func)
 {
     auto event = CNEW CEvent();
-    if (auto ev = event_new(base, fd, flags, CEvent::callback, event); ev) {
+    if (auto ev = event_new(CContex::MAIN_CONTEX->Base(), fd, flags, CEvent::callback, event); ev) {
         event->m_evfunc = std::move(func);
         event->m_event = ev;
         return event;
@@ -37,10 +37,10 @@ CEvent* CEvent::Create(event_base* base, evutil_socket_t fd, short flags, std::f
 }
 // End CEvent
 
-CContex::CContex()
+thread_local std::shared_ptr<CContex> CContex::MAIN_CONTEX = nullptr;
+CContex::CContex(event_base* base)
+    : m_base(base)
 {
-    m_base = event_base_new();
-    assert(nullptr != m_base);
 }
 
 CContex::~CContex()
@@ -49,6 +49,7 @@ CContex::~CContex()
         event_base_free(m_base);
         m_base = nullptr;
     }
+    Destroy();
 }
 
 event_base* CContex::Base()
@@ -71,8 +72,7 @@ void CContex::Exit(const int32_t t)
 
 CEvent* CContex::Register(evutil_socket_t fd, short flags, const timeval* tv, std::function<void()> cb)
 {
-    assert(nullptr != m_base);
-    auto ev = CEvent::Create(m_base, fd, flags, cb);
+    auto ev = CEvent::Create(fd, flags, cb);
 
     if (event_add(ev->Event(), tv) == -1) {
         CDEL(ev);
@@ -93,21 +93,26 @@ struct bufferevent* CContex::Bvsocket(evutil_socket_t fd, bufferevent_data_cb rc
     assert(nullptr != m_base);
     struct bufferevent* bv = nullptr;
     if (ssl) {
-        bv = bufferevent_openssl_socket_new(m_base, fd, ssl, accept ? BUFFEREVENT_SSL_ACCEPTING : BUFFEREVENT_SSL_CONNECTING, BEV_OPT_CLOSE_ON_FREE | BEV_OPT_DEFER_CALLBACKS);
+        if (accept)
+            bv = bufferevent_openssl_socket_new(m_base, fd, ssl, BUFFEREVENT_SSL_ACCEPTING, BEV_OPT_CLOSE_ON_FREE);
+        else
+            bv = bufferevent_openssl_socket_new(m_base, fd, ssl, BUFFEREVENT_SSL_CONNECTING, BEV_OPT_CLOSE_ON_FREE);
     } else {
         bv = bufferevent_socket_new(m_base, fd, BEV_OPT_CLOSE_ON_FREE);
+        bufferevent_setwatermark(bv, EV_READ | EV_WRITE, 0, MAX_WATERMARK_SIZE * 4);
     }
     if (!bv) {
         return nullptr;
     }
+    bufferevent_enable(bv, EV_READ | EV_WRITE);
     bufferevent_setcb(bv, rcb, wcb, ecb, arg);
-    if (-1 == bufferevent_enable(bv, EV_READ | EV_WRITE)) {
-        bufferevent_free(bv);
-        return nullptr;
-    }
-
-    bufferevent_setwatermark(bv, EV_READ | EV_WRITE, 0, MAX_WATERMARK_SIZE * 4);
     return bv;
+}
+
+evhttp_connection* CContex::CreateHttpConnection(bufferevent* bev, const char* address, unsigned short port)
+{
+    assert(nullptr != m_base);
+    return evhttp_connection_base_bufferevent_new(m_base, nullptr, bev, address, port);
 }
 
 bool CContex::AddEvent(const uint32_t id, const uint32_t t, std::function<void()> cb)
@@ -166,11 +171,6 @@ void CContex::Destroy()
         UnRegister(v.second);
     }
     m_em.clear();
-}
-
-evhttp_connection* CContex::CreateHttpConnection(bufferevent* bev, const char* address, unsigned short port)
-{
-    return evhttp_connection_base_bufferevent_new(m_base, nullptr, bev, address, port);
 }
 
 NAMESPACE_FRAMEWORK_END

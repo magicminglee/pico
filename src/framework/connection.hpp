@@ -51,6 +51,7 @@ public:
     static auto SplitUri(const std::string& uri) -> std::tuple<std::string, std::string, std::string, std::string>;
     bufferevent* GetBufEvent() { return m_bev; }
     constexpr bool IsPassive() { return m_peer_port > 0; }
+    const std::string& GetPeerIp() { return m_peer_ip; }
 
 protected:
     bufferevent* m_bev = { nullptr };

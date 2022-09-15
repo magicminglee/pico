@@ -14,6 +14,7 @@ class CWorker : public CObject {
 
 public:
     friend class CWorkerMgr;
+    static thread_local CWorker* LOCAL_WORKER;
     CWorker() = default;
     ~CWorker() = default;
     virtual bool Loop();
@@ -22,8 +23,6 @@ public:
     bool SendMsgToMain(const CChannel::MsgType type, std::string_view data);
 
     static void WaitForAllWorkers(const int32_t total);
-
-    static thread_local std::shared_ptr<CContex> MAIN_CONTEX;
 
 protected:
     virtual bool Init();
@@ -65,6 +64,7 @@ public:
 
     CWorker* Create(const uint64_t total);
     bool SendMsgToAllWorkers(const CChannel::MsgType type, std::string_view data);
+    bool SendMsgToOneWorker(const CChannel::MsgType type, std::string_view data);
 
 private:
     using WT = std::vector<std::unique_ptr<CWorker>>;
@@ -73,6 +73,7 @@ private:
     std::function<void(std::string_view)> m_textcb = { nullptr };
     std::function<void(std::string_view)> m_jsoncb = { nullptr };
     std::function<void(std::string_view)> m_binarycb = { nullptr };
+    uint16_t m_round_index = { 0 };
 
     DISABLE_CLASS_COPYABLE(CWorkerMgr);
 };

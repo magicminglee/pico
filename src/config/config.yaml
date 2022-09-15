@@ -5,44 +5,89 @@ main:
   id: 1
   #Specify timezone(default CST)
   #timezone: "/usr/share/zoneinfo/UTC"
-  #Specify the log directory.(default current directory)
-  logdir: "./mylog/"
-  #Specify the server verbosity level[DEBUG INFO TRACE WARN ERROR](default INFO)
-  loglevel: "INFO"
-  #Print log to teminal(default false)
-  verbose: true
-  #Split log file when file is larger than 64MB
-  isolate: true
-  #Specify the web root directory(default current directory)
-  #webroot: "./"
-  #Redirect to url specified.
-  redirecturl: "https://dev.wgnice.com:8443"
-  redirectstatus: 302
-  #forcehttps: true
-  #Specify the public key private key.
-  certificatefile: "../config/server.crt"
-  privatekeyfile: "../config/server.key"
-  #Setup allow origin
-  alloworigin: true
-  #Log module name
-  modulename: "pico"
-  #Api Key
-  apikey: "2fw$23x@AXh8nqQ!"
-  #token expire minutes(default 10 minutes)
-  tokenexpire: 10080
-  #maxframe bytes(default 64KB)
-  #maxframesize: 65536
-  #Redis connect url
-  redisurl: ["tcp://Ch1904@poker.demo.mongodb:5002/4"]
-  #Redis key expire seconds(default 5 minutes)
-  redisttl: 3600
-  #Mongodb connect url
-  mongourl: "mongodb://GAME:game12345@poker.demo.mongodb:5100,poker.demo.mongodb:5101,poker.demo.mongodb:5102/?authSource=admin&replicaSet=poker_demo"
-  dbconf: [{ "dbname": "global_999", "collection": ["users", "uniqueid"] }]
-  #Worker listenning host
-  hosts: ["http://*:9020", "https://*:9021"]
+
+  #listenning host
+  hosts: ["http://*:9080", "https://*:9443"]
   #Worker number(default 1)
-  workers: 4
-  #Http2 enable
-  http2able: true
-  httptimeout: 30
+  workers: 1
+  #Specify luascripts dir(default current directory luascripts)
+  #scriptdir: "/mnt/d/codes/3dgames/serverdev/src/luascripts"
+
+  log:
+    #Log module name
+    modulename: "PICO"
+    #Specify the log file .(default ./log.log)
+    logfile: "./mylog/log.log"
+    #Specify the server verbosity level[TRACE DEBUG INFO WARN ERROR](default INFO)
+    loglevel: "DEBUG"
+    #Print log to teminal(default false)
+    verbose: true
+    #Split log file when file is larger than 64MB up to rotatenums files (default)
+    rotatebytes: 67108864
+    rotatenums: 10
+    #Specify log flush level(default INFO)
+    flushlevel: "INFO"
+  ssl:
+    [
+      # {
+      #   servername: "a1.domain1.com",
+      #   certificate: "../config/d1server.crt",
+      #   privatekey: "../config/d1server.key",
+      # },
+      # {
+      #   servername: "[\\w\\d]+\\.domain2\\.com",
+      #   certificate: "../config/d2server.crt",
+      #   privatekey: "../config/d2server.key",
+      # },
+    ]
+  web:
+    #Setup allow origin
+    alloworigin: true
+    #Api Key
+    apikey: "apikeystring"
+    #token expire minutes(default 10 minutes)
+    tokenexpire: 600
+    #maxframe bytes(default 64KB)
+    maxframesize: 65536
+    #Http2 enable(default false)
+    http2able: true
+    #http read/write timeout(seconds)
+    httptimeout: 30
+    #Specify the web root directory(default current directory)
+    #webroot: "./"
+    #Redirect to url specified.
+    redirecturl: "https://redirect.domain.com:8443"
+    redirectstatus: 302
+    #forcehttps: true
+
+  db:
+    #Redis connect url
+    redisurl: ["tcp://password@redis.game.com:5002/1"]
+    #Redis key expire seconds(default 5 minutes)
+    redisttl: 3600
+    #Mongodb connect url
+    mongourl: "mongodb://user:password@mongodb.game.com:5100,mongodb.game.com:5101,mongodb.game.com:5102/?authSource=admin&replicaSet=demo"
+    dbconf:
+      [
+        {
+          dbname: "dbname",
+          collection: ["users", "uniqueid", "goorders", "iosorders"],
+        },
+      ]
+    #clickhouse url
+    clickhouseurl: "clickhouse://user:password@clickhouse.game.com:9000/gamestat"
+  confmap:
+    #google public key
+    gopubkey: "googlepublickeystring"
+    #ios purchase url
+    iosprourl: "https://buy.itunes.apple.com/verifyReceipt/"
+    #ios sanbox purchase url
+    iossanboxurl: "https://sandbox.itunes.apple.com/verifyReceipt/"
+    #ios shared secrete key
+    iossharedkey: "iossharedkeystring"
+    #httpproxy: "http://172.21.128.1:7890"
+    #websocket security key
+    websocketkey: "websocketkeystring"
+    test_rpcurl: "https://addons.mozilla.org/zh-TW/firefox/addon/spdy-indicator/"
+    test_wsurl: "wss://websocket.game.com:9023"
+    test_grpcurl: "http://127.0.0.1:50051/helloworld.Greeter/SayHello"

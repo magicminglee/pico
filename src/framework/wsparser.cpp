@@ -242,7 +242,7 @@ int CWSParser::Process(const char* data, const unsigned int dlen)
             size = sizeof(*fr) + sizeof(*payload) + payload_len;
         }
     }
-    // CINFO("fin=%d,rsv1=%d,rsv2=%d,rsv3=%d,opcode=%d,mask=%d,payload_len=%d,expayload_len=%llu,dlen=%u,size=%u,mask_key=%u,rcvlen=%llu",
+    // SPDLOG_INFO("fin={},rsv1={},rsv2={},rsv3={},opcode={},mask={},payload_len={},expayload_len={},dlen={},size={},mask_key={},rcvlen={}",
     //     fin,
     //     getrsv1(fr->fin_opcode),
     //     getrsv2(fr->fin_opcode),
@@ -267,7 +267,7 @@ int CWSParser::Process(const char* data, const unsigned int dlen)
     if (mask) {
         masking(payload_data, payload_len, mask_key);
         // std::string str((char*)payload_data,payload_len);
-        // CINFO("%s", str.c_str());
+        // SPDLOG_INFO("{}", str.c_str());
     }
     // record opcode for fragmented frame
     if (0 == m_rcv_len)
@@ -359,7 +359,7 @@ std::optional<std::vector<std::string_view>> CWSParser::Frame(const char* data, 
             m_snd_len = sizeof(*fr) + sizeof(*payload) + dlen;
         }
     } else {
-        // CINFO("payload is too long!");
+        // SPDLOG_INFO("payload is too long!");
         return std::nullopt;
     }
     if (mask_key > 0) {
@@ -436,9 +436,9 @@ void CWSParser::onCloseFrame(char* payload, unsigned int payload_len, unsigned i
         offset += 2;
         if (offset < payload_len) {
             std::string reason(payload + offset, payload_len - offset);
-            CINFO("%s by client: status=%u,reason=%s", __FUNCTION__, status_code, reason.c_str());
+            SPDLOG_INFO("{} by client: status={},reason={}", __FUNCTION__, status_code, reason);
         } else {
-            CINFO("%s by client: status=%u", __FUNCTION__, status_code);
+            SPDLOG_INFO("{} by client: status={}", __FUNCTION__, status_code);
         }
     }
 }

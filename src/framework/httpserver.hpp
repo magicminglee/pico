@@ -10,42 +10,7 @@
 #include "tcpserver.hpp"
 #include "wsparser.hpp"
 
-#include "nghttp2/nghttp2.h"
-
-#include "picohttpparser/picohttpparser.h"
-
 NAMESPACE_FRAMEWORK_BEGIN
-
-class CHttpParser {
-    enum class EParserState : uint32_t {
-        EParserState_Begin = 0,
-        EParserState_Head = 1,
-        EParserState_Body = 2,
-        EParserState_End = 3,
-    };
-
-public:
-    ~CHttpParser();
-    bool IsHttp2() { return nullptr != m_session; }
-    int32_t ParseRequest(std::string_view data);
-    int32_t ParseResponse(std::string_view data);
-    ghttp::CRequest* GetRequest() { return m_req.get(); }
-    void SetRequest(ghttp::CRequest* req) { m_req.reset(req); }
-    ghttp::CResponse* GetResponse() { return m_rsp.get(); }
-    void SetResponse(ghttp::CResponse* rsp) { m_rsp.reset(rsp); }
-    void SetNgHttp2Session(nghttp2_session* session);
-
-private:
-    int32_t parseHttp1Request(std::string_view data);
-    int32_t parseHttp1Response(std::string_view data);
-    int32_t parseHttp2Request(std::string_view data);
-    int32_t parseHttp2Response(std::string_view data);
-    std::unique_ptr<ghttp::CRequest> m_req = { nullptr };
-    std::unique_ptr<ghttp::CResponse> m_rsp = { nullptr };
-    struct phr_chunked_decoder m_decoder = {};
-    EParserState m_state = { EParserState::EParserState_Begin };
-    nghttp2_session* m_session = { nullptr };
-};
 
 class CWebSocket {
 public:
@@ -67,7 +32,7 @@ private:
     Callback m_rdfunc = { nullptr };
 };
 
-class CHTTPServer : public CObject {
+class CHTTPServer : public CTCPServer {
     typedef std::optional<std::pair<ghttp::HttpStatusCode, std::string>> HttpEventType(ghttp::CRequest*, ghttp::CResponse*);
 
 public:
@@ -81,27 +46,26 @@ public:
     CHTTPServer() = default;
     CHTTPServer(CHTTPServer&&);
     ~CHTTPServer();
-    bool ListenAndServe(std::string host);
+    bool OnConnected(std::string host, const int32_t fd);
     void ServeWs(const std::string path, CWebSocket::Callback cb);
     bool Register(const std::string path, ghttp::HttpMethod cmd, ghttp::HttpReqRspCallback cb);
     bool Register(const std::string path, FilterData rd);
     bool RegEvent(std::string ename, std::function<HttpEventType> cb);
-    bool Emit(const std::string path, ghttp::CRequest* req, ghttp::CResponse* rsp);
+    bool Emit(const std::string& path, ghttp::CRequest* req, ghttp::CResponse* rsp);
     std::optional<std::pair<ghttp::HttpStatusCode, std::string>> EmitEvent(std::string ename, ghttp::CRequest* req, ghttp::CResponse* rsp);
     std::optional<FilterData*> GetFilter(const std::string& path);
 
 private:
-    bool setOption(const int32_t fd);
     void destroy();
 
 private:
-    CTCPServer m_tcpserver;
     std::unordered_map<std::string, FilterData> m_callbacks;
     std::unordered_map<std::string, std::function<HttpEventType>> m_ev_callbacks;
 };
 
 class CHTTPClient {
 public:
+    CHTTPClient();
     ~CHTTPClient();
     static std::optional<CHTTPClient*> Emit(std::string_view url,
         ghttp::HttpRspCallback cb,
@@ -110,25 +74,33 @@ public:
         std::map<std::string, std::string> headers = {});
 
 public:
-    bool Request();
-    void Response();
+    bool Request(ghttp::HttpMethod method, std::string_view body, std::map<std::string, std::string> header);
+    void Response(const int32_t streamid);
     void Init(CConnection* conn, CHTTPServer* server);
-    CHttpParser& GetParser() { return m_parser; }
+    ghttp::CHttpParser& GetParser() { return m_parser; }
     void SetConnection(CConnection* conn) { m_evcon = conn; }
     CConnection* GetConnection() { return m_evcon; }
     void SetHttpServer(CHTTPServer* server) { m_httpserver = server; };
-    bool IsHttp2() { return nullptr != m_session; }
+    CHTTPServer* GetHttpServer() { return m_httpserver; };
     const std::string& GetURL() { return m_url; }
+    bool IsPassive() { return nullptr == m_callback; }
+
+    // Websocket Api
+    void SetWSCallback(CWebSocket::Callback cb) { m_wsfunc = cb; }
+    void OnWebsocket();
 
     // HTTP2 Api
+    bool IsHttp2() { return nullptr != m_session; }
     bool CheckHttp2();
     bool InitNghttp2SessionData();
-    bool SendResponse(ghttp::CRequest* req, const ghttp::HttpStatusCode status, std::unordered_map<std::string, std::string> header, std::optional<std::string_view> data);
+    bool H2Response(ghttp::CRequest* req, const ghttp::HttpStatusCode status, std::unordered_map<std::string, std::string> header, std::optional<std::string_view> data);
     static void OnWrite(CHTTPClient* hclient);
     nghttp2_session* GetNGHttp2Session() { return m_session; }
+    ghttp::CStream* CreateStream(const int32_t streamid);
+    bool DelStream(const int32_t streamid);
+    std::optional<ghttp::CStream*> GetStream(const int32_t streamid);
 
 private:
-    static ssize_t onDataSourceReadCallback(nghttp2_session* session, int32_t stream_id, uint8_t* buf, size_t length, uint32_t* data_flags, nghttp2_data_source* source, void* user_data);
     static ssize_t sendCallback(nghttp2_session* session, const uint8_t* data, size_t length, int flags, void* user_data);
     static int onFrameRecvCallback(nghttp2_session* session, const nghttp2_frame* frame, void* user_data);
     static int onStreamCloseCallback(nghttp2_session* session, int32_t stream_id, uint32_t error_code, void* user_data);
@@ -140,23 +112,34 @@ private:
         uint8_t flags, int32_t stream_id, const uint8_t* data, size_t len, void* user_data);
     static int onBeginHeadersCallback(nghttp2_session* session, const nghttp2_frame* frame, void* user_data);
     static int onBeforeFrameSendCallback(nghttp2_session* session, const nghttp2_frame* frame, void* user_data);
-    int onRequestRecv(ghttp::CRequest* req);
+    static int onSendDataCallback(nghttp2_session* session,
+        nghttp2_frame* frame,
+        const uint8_t* framehd, size_t length,
+        nghttp2_data_source* source,
+        void* user_data);
+
+    int onRequestRecv(ghttp::CStream* req);
     void removeStreamData(ghttp::CRequest* s);
     bool sendFile(ghttp::CRequest* stream_data,
         const ghttp::HttpStatusCode status, std::unordered_map<std::string, std::string> header, const int32_t fd);
     bool sessionSend();
     bool sendConnectionHeader();
-    bool submitRequest();
-    bool isPassive() { return nullptr == m_callback; }
-    std::map<std::string, std::string> getHttp2Header();
+    bool submitRequest(ghttp::CStream* stream);
 
 private:
     ghttp::HttpRspCallback m_callback = { nullptr };
+    ghttp::HttpRspCallback m_proxy_callback = { nullptr };
     CConnection* m_evcon = { nullptr };
     nghttp2_session* m_session = { nullptr };
-    CHttpParser m_parser;
+    ghttp::CHttpParser m_parser;
     std::string m_url;
     CHTTPServer* m_httpserver = { nullptr };
+    bool m_is_useproxy = { false };
+    bool m_need_connect_proxy = { false };
+    bool m_proxy_connected = { false };
+    CWebSocket::Callback m_wsfunc = { nullptr };
+    std::map<int32_t, std::unique_ptr<ghttp::CStream>> m_streams;
+    std::unique_ptr<ghttp::CStream> m_base_stream;
 };
 
 NAMESPACE_FRAMEWORK_END

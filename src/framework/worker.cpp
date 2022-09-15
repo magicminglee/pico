@@ -11,12 +11,13 @@ NAMESPACE_FRAMEWORK_BEGIN
 std::mutex CWorker::m_mutex;
 std::condition_variable CWorker::m_cond;
 int32_t CWorker::m_init_threads;
-thread_local std::shared_ptr<CContex> CWorker::MAIN_CONTEX = nullptr;
+thread_local CWorker* CWorker::LOCAL_WORKER = nullptr;
 
 bool CWorker::Loop()
 {
-    MAIN_CONTEX.reset(CNEW CContex());
-    assert(nullptr != MAIN_CONTEX);
+    LOCAL_WORKER = this;
+    CContex::MAIN_CONTEX.reset(CNEW CContex(event_base_new()));
+    assert(nullptr != CContex::MAIN_CONTEX);
 
     if (!Init()) {
         initOk();
@@ -25,7 +26,7 @@ bool CWorker::Loop()
 
     initOk();
 
-    MAIN_CONTEX->Loop();
+    CContex::MAIN_CONTEX->Loop();
 
     Destroy();
 
@@ -35,12 +36,13 @@ bool CWorker::Loop()
 void CWorker::readOnLeft(bufferevent* bev, void* ctx)
 {
     CWorker* w = (CWorker*)ctx;
-    std::optional<CChannel::MsgType> type;
-    std::optional<std::string_view> data;
-    std::tie(type, data) = w->m_main_and_work_chan.ReadL();
-    if (type && data) {
-        if (auto it = w->m_left_callbacks.find(type.value()); it != w->m_left_callbacks.end()) {
-            it->second(std::move(data.value()));
+    auto res = w->m_main_and_work_chan.ReadL();
+    for (auto v : res) {
+        auto& [type, data] = v;
+        if (type && data) {
+            if (auto it = w->m_left_callbacks.find(type.value()); it != w->m_left_callbacks.end()) {
+                it->second(data.value());
+            }
         }
     }
 }
@@ -48,12 +50,13 @@ void CWorker::readOnLeft(bufferevent* bev, void* ctx)
 void CWorker::readOnRight(bufferevent* bev, void* ctx)
 {
     CWorker* w = (CWorker*)ctx;
-    std::optional<CChannel::MsgType> type;
-    std::optional<std::string_view> data;
-    std::tie(type, data) = w->m_main_and_work_chan.ReadR();
-    if (type && data) {
-        if (auto it = w->m_right_callbacks.find(type.value()); it != w->m_right_callbacks.end()) {
-            it->second(std::move(data.value()));
+    auto res = w->m_main_and_work_chan.ReadR();
+    for (auto v : res) {
+        auto& [type, data] = v;
+        if (type && data) {
+            if (auto it = w->m_right_callbacks.find(type.value()); it != w->m_right_callbacks.end()) {
+                it->second(data.value());
+            }
         }
     }
 }
@@ -80,24 +83,16 @@ void CWorker::OnRightEvent(
 
 bool CWorker::Init()
 {
-    if (!m_main_and_work_chan.CreateBvL(*MAIN_CONTEX, CWorker::readOnLeft, nullptr, nullptr, this)) {
-        CERROR("CTX:%s create channel fail", MYARGS.CTXID.c_str());
+    if (!m_main_and_work_chan.CreateBvL(*CContex::MAIN_CONTEX, CWorker::readOnLeft, nullptr, nullptr, this)) {
+        SPDLOG_ERROR("CTX:{} create channel fail", MYARGS.CTXID);
         return false;
     }
-    MYARGS.LogDir = MYARGS.LogDir.value() + "w" + Name();
     MYARGS.CTXID = Name();
     MYARGS.Tid = Id();
 
-    XLOG::LogInit(MYARGS.LogLevel, MYARGS.ModuleName, MYARGS.LogDir, MYARGS.IsVerbose, MYARGS.IsIsolate);
     if (!CSSLContex::Instance().Init()) {
-        CERROR("CTX:%s init ssl contex", MYARGS.CTXID.c_str());
+        SPDLOG_ERROR("CTX:{} init ssl contex", MYARGS.CTXID);
         return false;
-    }
-    if (MYARGS.CertificateFile && MYARGS.PrivateKeyFile) {
-        if (!CSSLContex::Instance().LoadCertificateAndPrivateKey(MYARGS.CertificateFile.value(), MYARGS.PrivateKeyFile.value())) {
-            CERROR("CTX:%s load ssl certificate and private key", MYARGS.CTXID.c_str());
-            return false;
-        }
     }
 
     return true;
@@ -133,10 +128,18 @@ CWorker* CWorkerMgr::Create(const uint64_t total)
     if (!w->m_main_and_work_chan.Create())
         return nullptr;
 
-    if (!w->m_main_and_work_chan.CreateBvR(*CWorker::MAIN_CONTEX, CWorker::readOnRight, nullptr, nullptr, w))
+    if (!w->m_main_and_work_chan.CreateBvR(*CContex::MAIN_CONTEX, CWorker::readOnRight, nullptr, nullptr, w))
         return nullptr;
 
     return w;
+}
+
+bool CWorkerMgr::SendMsgToOneWorker(const CChannel::MsgType type, std::string_view data)
+{
+    if (m_mgr.empty())
+        return false;
+    m_round_index = (m_round_index + 1) % m_mgr.size();
+    return m_mgr[m_round_index]->m_main_and_work_chan.WriteR(type, std::move(data));
 }
 
 void CWorker::WaitForAllWorkers(const int32_t total)

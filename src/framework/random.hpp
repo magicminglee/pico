@@ -4,8 +4,8 @@
 
 NAMESPACE_FRAMEWORK_BEGIN
 
-//Produces random integer values i, uniformly distributed on the closed interval [0, INT_MAX] by default.
-//Otherwise you can specify a uniform_int_distribution distrubuted object.
+// Produces random integer values i, uniformly distributed on the closed interval [0, INT_MAX] by default.
+// Otherwise you can specify a uniform_int_distribution distrubuted object.
 class CRandomGenerator {
 public:
     CRandomGenerator()
@@ -20,7 +20,7 @@ public:
         int64_t MAX_RANGE = m_distrib.max();
         int64_t limit = MAX_RANGE - (MAX_RANGE % range);
         do {
-            rnd = rand();
+            rnd = m_distrib(m_generator);
         } while (rnd >= limit);
         return (rnd % range) + l;
     }

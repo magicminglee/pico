@@ -33,6 +33,8 @@ public:
     bool Init(const int32_t fd, const std::string host);
     bool Connect(std::string host, std::optional<bool> ipv6 = std::nullopt);
     CConnection* Connection() { return m_conn.get(); }
+    bool InitProxy(const std::string& hostname);
+    bool EnableProxy();
 };
 
 NAMESPACE_FRAMEWORK_END

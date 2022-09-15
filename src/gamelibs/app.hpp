@@ -19,6 +19,9 @@
 #include "framework/worker.hpp"
 #include "framework/xlog.hpp"
 
+#include "clickhouse.hpp"
+#include "lstate.hpp"
+#include "luabind.hpp"
 #include "mongo.hpp"
 #include "redis.hpp"
 
@@ -28,41 +31,83 @@ NAMESPACE_FRAMEWORK_BEGIN
 
 using namespace gamelibs::redis;
 using namespace gamelibs::mongo;
+using namespace gamelibs::lstate;
+using namespace gamelibs::ch;
+namespace fs = std::filesystem;
 
 class CApp {
     using CommandSyncFunc = std::function<bool(const nlohmann::json&)>;
-    class AppWorker final : public CWorker {
-        std::vector<std::shared_ptr<CHTTPServer>> m_http_server;
-        std::vector<std::shared_ptr<CTCPServer>> m_tcp_server;
 
-    public:
+public:
+    class AppWorker final : public CWorker {
         std::map<std::string, CommandSyncFunc> m_command_sync_cbs;
 
     public:
+        void CallByCommand(const std::string cmd, const nlohmann::json& j)
+        {
+            if (auto it = m_command_sync_cbs.find(cmd); it != m_command_sync_cbs.end()) {
+                it->second(j);
+            }
+        }
+        void RegisterCommand(const std::string cmd, CommandSyncFunc cb)
+        {
+            m_command_sync_cbs[cmd] = cb;
+        }
+
+        bool LoadLuaFiles()
+        {
+            if (!CLuaState::MAIN_LUASTATE)
+                CLuaState::MAIN_LUASTATE.reset(CNEW CLuaState());
+            CheckCondition(CLuaState::MAIN_LUASTATE->Init(), false);
+            luaopen_luabind(CLuaState::MAIN_LUASTATE->Handle());
+            auto s = CChrono::NowMs();
+            auto p = fs::path(MYARGS.ScriptDir.value()) / "init.lua";
+            if (LUA_OK != luaL_loadfile(CLuaState::MAIN_LUASTATE->Handle(), p.c_str())) {
+                SPDLOG_ERROR("loadfile failed");
+                return false;
+            }
+            CLuaState::MAIN_LUASTATE->Call<void>(0, 0);
+            SPDLOG_INFO("LoadLuaFiles luascripts elapse {} ms", CChrono::NowMs() - s);
+            return true;
+        }
+
         virtual bool Init() final
         {
             CheckCondition(CWorker::Init(), false);
+            CheckCondition(LoadLuaFiles(), false);
 
             OnLeftEvent(
                 [](std::string_view data) {
                     if (data == "stop") {
-                        CWorker::MAIN_CONTEX->Exit(0);
+                        CContex::MAIN_CONTEX->Exit(0);
                     }
                 },
                 [this](std::string_view data) {
                     try {
-                        auto j = nlohmann::json::parse(std::move(data));
-                        if (j["cmd"].is_string() && j["cmd"].get_ref<const std::string&>() == "reload") {
-                            if (j.contains("loglevel") && j["loglevel"].is_string()) {
-                                MYARGS.LogLevel = j["loglevel"].get<std::string>();
-                                XLOG::WARN_W.UpdateLogLevel(XLOG::LogWriter::LogStrToLogLevel(MYARGS.LogLevel.value()));
-                                XLOG::INFO_W.UpdateLogLevel(XLOG::LogWriter::LogStrToLogLevel(MYARGS.LogLevel.value()));
+                        auto j = nlohmann::json::parse(data);
+                        if (j["cmd"].is_string() && j["cmd"].get_ref<const std::string&>() == "newconn") {
+                            auto schema = j["schema"].get<std::string>();
+                            auto host = j["host"].get<std::string>();
+                            auto fd = j["fd"].get<int32_t>();
+                            auto server = j["server"].get<uintptr_t>();
+                            if (schema == "http" || schema == "https") {
+                                ((CHTTPServer*)server)->OnConnected(host, fd);
+                            } else if (schema == "tcp") {
+                                // CApp::TcpRegister("", nullptr);
                             }
-                            if ((j.contains("certificatefile") && j["certificatefile"].is_string()
-                                    && j.contains("privatekeyfile") && j["privatekeyfile"].is_string())) {
-                                MYARGS.CertificateFile = j["certificatefile"].get<std::string>();
-                                MYARGS.PrivateKeyFile = j["privatekeyfile"].get<std::string>();
-                                CSSLContex::Instance().LoadCertificateAndPrivateKey(MYARGS.CertificateFile.value(), MYARGS.PrivateKeyFile.value());
+                        } else if (j["cmd"].is_string() && j["cmd"].get_ref<const std::string&>() == "reload") {
+                            if (j.contains("ssl") && j["ssl"].is_array()) {
+                                MYARGS.SslConf.clear();
+                                for (auto& v : j["ssl"]) {
+                                    CArgument::SSLConf conf;
+                                    conf.servername = v["servername"];
+                                    conf.cert = v["certificate"];
+                                    conf.prikey = v["privatekey"];
+                                    MYARGS.SslConf.push_back(std::move(conf));
+                                }
+                                if (!CSSLContex::Instance().Init()) {
+                                    SPDLOG_ERROR("CTX:{} init ssl contex", MYARGS.CTXID);
+                                }
                             }
                             if (j.contains("alloworigin") && j["alloworigin"].is_boolean())
                                 MYARGS.IsAllowOrigin = j["alloworigin"].get<bool>();
@@ -82,43 +127,32 @@ class CApp {
                                 MYARGS.RedisTTL = j["redisttl"].get<uint64_t>();
                             if (j.contains("http2able") && j["http2able"].is_boolean())
                                 MYARGS.Http2Able = j["http2able"].get<bool>();
-                            CINFO("CTX:%s reload config %s", MYARGS.CTXID.c_str(), j.dump().c_str());
-                        } else if (j["cmd"].is_string()) {
-                            if (auto it = this->m_command_sync_cbs.find(j["cmd"].get<std::string>()); it != this->m_command_sync_cbs.end()) {
-                                it->second(j);
+                            if (j.contains("confmap") && j["confmap"].is_object()) {
+                                MYARGS.ConfMap = j["confmap"].get<std::map<std::string, std::string>>();
                             }
+                            SPDLOG_INFO("CTX:{} reload config {}", MYARGS.CTXID, j.dump());
+                            this->LoadLuaFiles();
+                        } else if (j["cmd"].is_string()) {
+                            this->CallByCommand(j["cmd"].get<std::string>(), j);
                         }
                     } catch (const nlohmann::json::exception& e) {
-                        CERROR("CTX:%s %s json exception %s", MYARGS.CTXID.c_str(), __FUNCTION__, e.what());
+                        SPDLOG_ERROR("CTX:{} {} json {} exception {}", MYARGS.CTXID, __FUNCTION__, data, e.what());
                     }
                 },
                 nullptr);
 
-            CApp::CommandRegister(m_command_sync_cbs);
+            CApp::CommandRegister(this);
             if (!CApp::Init()) {
-                CERROR("CTX:%s CApp::Init fail", MYARGS.CTXID.c_str());
+                SPDLOG_ERROR("CTX:{} CApp::Init fail", MYARGS.CTXID);
                 return false;
             }
             if (!CRedisMgr::Instance().Init()) {
-                CERROR("CTX:%s CRedisMgr::Init fail", MYARGS.CTXID.c_str());
+                SPDLOG_ERROR("CTX:{} CRedisMgr::Init fail", MYARGS.CTXID);
                 return false;
             }
-
-            for (auto& v : MYARGS.Workers[Id()].Host) {
-                auto [schema, host, port, path] = CConnection::SplitUri(v);
-                if (schema == "http" || schema == "https") {
-                    m_http_server.push_back(std::make_shared<CHTTPServer>());
-                    auto ref = m_http_server.back();
-                    if (!ref->ListenAndServe(v)) {
-                        CERROR("CTX:%s HttpServer::Init %s", MYARGS.CTXID.c_str(), v.c_str());
-                        continue;
-                    }
-                    CApp::WebRegister(this, ref);
-                } else if (schema == "tcp") {
-                    m_tcp_server.push_back(std::make_shared<CTCPServer>());
-                    auto ref = m_tcp_server.back();
-                    CApp::TcpRegister(this, v, ref);
-                }
+            if (!CClickHouseMgr::Instance().Init()) {
+                SPDLOG_ERROR("CTX:{} CClickHouseMgr::Init fail", MYARGS.CTXID);
+                return false;
             }
 
             return true;
@@ -126,6 +160,8 @@ class CApp {
     };
 
     class AppService final : public CService {
+        std::vector<CTCPServer*> m_tcp_server;
+
     public:
         virtual bool Init() final
         {
@@ -141,8 +177,30 @@ class CApp {
                 nullptr);
 
             CheckCondition(CMongo::Instance().Init(MYARGS.MongoUrl.value()), false);
+
+            for (auto& v : MYARGS.Workers.back().Host) {
+                std::string schema, host, port, path;
+                std::tie(schema, host, port, path) = CConnection::SplitUri(v);
+                m_tcp_server.push_back(CNEW CHTTPServer());
+                CHTTPServer* ref = (CHTTPServer*)m_tcp_server.back();
+                ref->ListenAndServe(v, [schema, ref, v](const int32_t fd) {
+                    nlohmann::json j;
+                    j["cmd"] = "newconn";
+                    j["schema"] = schema;
+                    j["host"] = v;
+                    j["fd"] = fd;
+                    j["server"] = (uintptr_t)ref;
+                    CWorkerMgr::Instance().SendMsgToOneWorker(CChannel::MsgType::Json, j.dump());
+                });
+
+                if (schema == "http" || schema == "https") {
+                    CApp::WebRegister(ref);
+                } else if (schema == "tcp") {
+                    // CApp::TcpRegister(v, ref);
+                }
+            }
 #ifdef PLATFORMOS
-            CINFO("Service has been initiated on platfrom %s", PLATFORMOS);
+            SPDLOG_INFO("Service has been initiated on platfrom {}", PLATFORMOS);
 #endif
             return true;
         }
@@ -151,24 +209,23 @@ class CApp {
         }
     };
 
-public:
     static bool Start(int argc, char** argv)
     {
         CheckCondition(MYARGS.ParseArg(argc, argv, "Pico", "Pico Program"), false);
         CGlobal::InitGlobal();
 
-        XLOG::LogInit(MYARGS.LogLevel, MYARGS.ModuleName, MYARGS.LogDir,
-            MYARGS.IsVerbose, MYARGS.IsIsolate);
+        XLOG::LogInit();
 
         AppService s;
         s.Loop();
+        SPDLOG_INFO("Service stop");
         return true;
     }
 
     static bool Init() { return true; }
-    static void WebRegister(CWorker* w, std::shared_ptr<CHTTPServer> srv);
-    static void TcpRegister(CWorker* w, const std::string host, std::shared_ptr<CTCPServer> srv);
-    static void CommandRegister(std::map<std::string, CommandSyncFunc>& ref);
+    static void WebRegister(CHTTPServer* srv);
+    static void TcpRegister(const std::string host, std::shared_ptr<CTCPServer> srv);
+    static void CommandRegister(AppWorker* w);
 };
 
 NAMESPACE_FRAMEWORK_END

@@ -13,13 +13,13 @@ auto CConnection::SplitUri(const std::string& uri)
 {
     evhttp_uri* evuri = evhttp_uri_parse_with_flags(uri.c_str(), 0);
     if (!evuri) {
-        CERROR("invalid URI: no scheme %s", uri.c_str());
+        SPDLOG_ERROR("invalid URI: no scheme {}", uri);
         return std::make_tuple("", "", "", "");
     }
     std::string host = evhttp_uri_get_host(evuri);
-    std::transform(host.begin(), host.end(), host.begin(), ::tolower);
+    // std::transform(host.begin(), host.end(), host.begin(), ::tolower);
     std::string path = evhttp_uri_get_path(evuri);
-    std::transform(path.begin(), path.end(), path.begin(), ::tolower);
+    // std::transform(path.begin(), path.end(), path.begin(), ::tolower);
     int32_t tmpport = evhttp_uri_get_port(evuri);
     std::string scheme = evhttp_uri_get_scheme(evuri);
     std::transform(scheme.begin(), scheme.end(), scheme.begin(), ::tolower);
@@ -57,7 +57,7 @@ void CConnection::SetStreamTypeBySchema(const std::string& schema)
 
 CConnection::CConnection()
 {
-    CDEBUG("new cconnection %p", this);
+    SPDLOG_DEBUG("new cconnection {}", fmt::ptr(this));
 }
 
 CConnection::~CConnection()
@@ -66,7 +66,7 @@ CConnection::~CConnection()
         bufferevent_free(m_bev);
         m_bev = nullptr;
     }
-    CDEBUG("free cconnection %p", this);
+    SPDLOG_DEBUG("free cconnection {}", fmt::ptr(this));
 }
 
 bool CConnection::IsClosing()

@@ -7,7 +7,7 @@
 
 NAMESPACE_FRAMEWORK_BEGIN
 
-//Entrance On Worker Thread
+// Entrance On Worker Thread
 class CChannel : public CObject {
 public:
     enum class MsgType : std::uint8_t {
@@ -79,15 +79,15 @@ public:
         return write(true, type, data);
     }
 
-    std::tuple<std::optional<MsgType>, std::optional<std::string_view>> ReadR()
+    std::vector<std::tuple<std::optional<MsgType>, std::optional<std::string>>> ReadR()
     {
-        CheckCondition(IsValid(), std::make_tuple(std::nullopt, std::nullopt));
+        CheckCondition(IsValid(), {});
         return read(false);
     }
 
-    std::tuple<std::optional<MsgType>, std::optional<std::string_view>> ReadL()
+    std::vector<std::tuple<std::optional<MsgType>, std::optional<std::string>>> ReadL()
     {
-        CheckCondition(IsValid(), std::make_tuple(std::nullopt, std::nullopt));
+        CheckCondition(IsValid(), {});
         return read(true);
     }
 
@@ -96,23 +96,27 @@ private:
     bufferevent* m_bvs[2];
     static const uint16_t CHANNEL_MAX_PACKET_LENGTH = 64 * 1024 - 1;
 
-    std::tuple<std::optional<MsgType>, std::optional<std::string_view>> read(bool left_or_right)
+    std::vector<std::tuple<std::optional<MsgType>, std::optional<std::string>>> read(bool left_or_right)
     {
         static thread_local char* srcpackbuf = { nullptr };
         if (!srcpackbuf)
             srcpackbuf = CNEW char[CHANNEL_MAX_PACKET_LENGTH];
+        std::vector<std::tuple<std::optional<MsgType>, std::optional<std::string>>> res;
         struct evbuffer* input = bufferevent_get_input(left_or_right ? m_bvs[0] : m_bvs[1]);
         size_t len = evbuffer_get_length(input);
-        if (len >= sizeof(MsgData)) {
+        while (len >= sizeof(MsgData)) {
             MsgData* msg = (MsgData*)srcpackbuf;
             evbuffer_copyout(input, msg, sizeof(MsgData));
-            CheckCondition(len >= sizeof(MsgData) + msg->size, std::make_tuple(std::nullopt, std::nullopt));
-            CheckCondition(CHANNEL_MAX_PACKET_LENGTH >= msg->size + sizeof(MsgData), std::make_tuple(std::nullopt, std::nullopt));
+            if (len < sizeof(MsgData) + msg->size)
+                break;
+            if (CHANNEL_MAX_PACKET_LENGTH < msg->size + sizeof(MsgData))
+                break;
 
             evbuffer_remove(input, msg, msg->size + sizeof(MsgData));
-            return std::make_tuple(msg->type, std::string_view(msg->data, msg->size));
+            res.push_back(std::make_tuple(msg->type, std::string(msg->data, msg->size)));
+            len = evbuffer_get_length(input);
         }
-        return std::make_tuple(std::nullopt, std::nullopt);
+        return res;
     }
 
     bool write(bool left_or_right, const MsgType type, std::string_view data)

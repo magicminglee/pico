@@ -21,7 +21,7 @@ public:
     CEvent();
     ~CEvent();
     struct event* Event() { return m_event; }
-    static CEvent* Create(event_base* base, evutil_socket_t fd, short flags, std::function<void()> func);
+    static CEvent* Create(evutil_socket_t fd, short flags, std::function<void()> func);
 
 private:
     static void callback(evutil_socket_t, short, void*);
@@ -32,7 +32,8 @@ private:
 };
 class CContex : public CObject {
 public:
-    CContex();
+    static thread_local std::shared_ptr<CContex> MAIN_CONTEX;
+    CContex(event_base* base);
     ~CContex();
     event_base* Base();
     void Loop();

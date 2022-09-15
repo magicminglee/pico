@@ -9,8 +9,8 @@ NAMESPACE_FRAMEWORK_BEGIN
 
 bool CService::Loop()
 {
-    CWorker::MAIN_CONTEX.reset(CNEW CContex());
-    assert(nullptr != CWorker::MAIN_CONTEX);
+    CContex::MAIN_CONTEX.reset(CNEW CContex(event_base_new()));
+    assert(nullptr != CContex::MAIN_CONTEX);
 
     InitSignal();
 
@@ -21,7 +21,7 @@ bool CService::Loop()
 
     Start();
 
-    CWorker::MAIN_CONTEX->Loop();
+    CContex::MAIN_CONTEX->Loop();
 
     Destroy();
 
@@ -30,20 +30,20 @@ bool CService::Loop()
 
 void CService::InitSignal()
 {
-    CWorker::MAIN_CONTEX->Register(
+    CContex::MAIN_CONTEX->Register(
         SIGINT, EV_SIGNAL | EV_PERSIST, nullptr, [this]() -> void {
             this->Stopping();
         });
-    CWorker::MAIN_CONTEX->Register(
+    CContex::MAIN_CONTEX->Register(
         SIGTERM, EV_SIGNAL | EV_PERSIST, nullptr, [this]() -> void {
             this->Stopping();
         });
 #if defined(LINUX_PLATFORMOS) || defined(DARWIN_PLATFORMOS)
-    CWorker::MAIN_CONTEX->Register(
+    CContex::MAIN_CONTEX->Register(
         SIGHUP, EV_SIGNAL | EV_PERSIST, nullptr, []() -> void {});
-    CWorker::MAIN_CONTEX->Register(
+    CContex::MAIN_CONTEX->Register(
         SIGPIPE, EV_SIGNAL | EV_PERSIST, nullptr, []() -> void {});
-    CWorker::MAIN_CONTEX->Register(
+    CContex::MAIN_CONTEX->Register(
         SIGUSR1, EV_SIGNAL | EV_PERSIST, nullptr, [this]() -> void {
             this->Reload();
         });
@@ -53,7 +53,7 @@ void CService::InitSignal()
 void CService::Stopping()
 {
     CWorkerMgr::Instance().SendMsgToAllWorkers(CChannel::MsgType::Text, "stop");
-    CWorker::MAIN_CONTEX->Exit(1);
+    CContex::MAIN_CONTEX->Exit(1);
 }
 
 void CService::initWorker()
@@ -89,6 +89,7 @@ void CService::Destroy()
 void CService::Reload()
 {
     MYARGS.ParseYaml();
+    XLOG::Reload();
     Init();
 }
 

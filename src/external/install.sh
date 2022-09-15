@@ -13,6 +13,8 @@ JSON_INSTALL_PATH="${INSTALL_ROOT_DIR_PATH}""/json/"
 PHR_INSTALL_PATH="${INSTALL_ROOT_DIR_PATH}""/phr/"
 XLOG_INSTALL_PATH="${INSTALL_ROOT_DIR_PATH}""/xlog/"
 PROTOBUF_INSTALL_PATH="${INSTALL_ROOT_DIR_PATH}""/protobuf/"
+LUA_INSTALL_PATH="${INSTALL_ROOT_DIR_PATH}""/lua/"
+LUA_PROTOBUF_INSTALL_PATH="${INSTALL_ROOT_DIR_PATH}""/luapb/"
 HIREDIS_INSTALL_PATH="${INSTALL_ROOT_DIR_PATH}""/hiredis/"
 REDISCXX_INSTALL_PATH="${INSTALL_ROOT_DIR_PATH}""/rediscxx/"
 SASL2_INSTALL_PATH="${INSTALL_ROOT_DIR_PATH}""/sasl2/"
@@ -25,6 +27,8 @@ CLICKHOUSE_INSTALL_PATH="${INSTALL_ROOT_DIR_PATH}""/clickhousecxx/"
 JWTCPP_INSTALL_PATH="${INSTALL_ROOT_DIR_PATH}""/jwt-cpp/"
 NGHTTP2_INSTALL_PATH="${INSTALL_ROOT_DIR_PATH}""/nghttp2/"
 LLHTTP_INSTALL_PATH="${INSTALL_ROOT_DIR_PATH}""/llhttp/"
+SPDLOG_INSTALL_PATH="${INSTALL_ROOT_DIR_PATH}""/spdlog/"
+CATCH2_INSTALL_PATH="${INSTALL_ROOT_DIR_PATH}""/catch2/"
 
 #openssl
 rm -rf ${OPENSSL_INSTALL_PATH}
@@ -90,13 +94,48 @@ cd ${ROOT_DIR_PATH}
 rm -rf json-3.9.1
 
 #protobuf
-#rm -rf ${PROTOBUF_INSTALL_PATH}
-#tar xvzf protobuf-cpp-3.12.3.tar.gz
-#cd protobuf-3.12.3/cmake
-#cmake -DCMAKE_INSTALL_PREFIX=${PROTOBUF_INSTALL_PATH} -H. -Bbuild
-#cd build && make -j4 && make install
-#cd ${ROOT_DIR_PATH}
-#rm -rf protobuf-3.12.3
+rm -rf ${PROTOBUF_INSTALL_PATH}
+tar xvzf protobuf-cpp-3.12.3.tar.gz
+cd protobuf-3.12.3/cmake
+cmake -DCMAKE_INSTALL_PREFIX=${PROTOBUF_INSTALL_PATH} -H. -Bbuild
+cd build && make -j4 && make install
+cd ${ROOT_DIR_PATH}
+rm -rf protobuf-3.12.3
+
+#lua
+rm -rf ${LUA_INSTALL_PATH}
+mkdir -pv ${LUA_INSTALL_PATH}
+tar xzvf lua-5.3.6.tar.gz
+cd lua-5.3.6
+if [[ $(uname) == 'Darwin' ]]; then
+	make macosx install INSTALL_TOP=${LUA_INSTALL_PATH}
+elif [[ $(uname) == 'Linux' ]]; then
+	sed -i "44,9s#liblua.a#liblua.so#g" Makefile
+	sed -i "61i\	\t\$(CC) -shared -ldl -Wl,-soname,liblua.so -o liblua.so \$? -lm \$(MYLDFLAGS)" src/Makefile
+	make "MYCFLAGS=-fPIC" linux install INSTALL_TOP=${LUA_INSTALL_PATH}
+fi
+cd ${ROOT_DIR_PATH}
+rm -rf lua-5.3.6
+
+#lua-protobuf
+rm -rf ${LUA_PROTOBUF_INSTALL_PATH}
+tar xzvf lua-protobuf-0.3.4.tar.gz
+cd lua-protobuf-0.3.4
+cmake -DCMAKE_INSTALL_PREFIX=${INSTALL_ROOT_DIR_PATH} -H. -Bbuild
+cd build && make -j4 && make install
+ln -s ${LUA_PROTOBUF_INSTALL_PATH}lib/libpb.so ${LUA_PROTOBUF_INSTALL_PATH}lib/pb.so
+cd ${ROOT_DIR_PATH}
+rm -rf lua-protobuf-0.3.4
+
+git clone https://github.com/rxi/json.lua.git
+cp json.lua/json.lua ${LUA_PROTOBUF_INSTALL_PATH}lib
+rm -rf json.lua
+
+git clone https://github.com/Tieske/date.git
+mv date/src/date.lua ${LUA_PROTOBUF_INSTALL_PATH}lib
+rm -rf date
+#export LUA_PATH_5_3=${LUA_PROTOBUF_INSTALL_PATH}lib/?.lua
+#export LUA_CPATH_5_3=${LUA_PROTOBUF_INSTALL_PATH}lib/?.so
 
 #rediscxx
 rm -rf ${REDISCXX_INSTALL_PATH}
@@ -173,14 +212,37 @@ cd llhttp-release-v6.0.5
 cmake -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX=${LLHTTP_INSTALL_PATH} -H. -Bbuild
 cd build
 make -j4 && make install
-cd ${LLHTTP_INSTALL_PATH}
+cd ${ROOT_DIR_PATH}
 rm -rf llhttp-release-v6.0.5
 
 #clickhouse
-#tar xvzf clickhouse-cpp-2.1.0.tar.gz
-#mkdir clickhouse-cpp-2.1.0/build
-#cd clickhouse-cpp-2.1.0/build
-#cmake -DCMAKE_CXX_STANDARD=17 -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=${CLICKHOUSE_INSTALL_PATH} ..
-#make -j4 && make install
-#cd ${ROOT_DIR_PATH}
-#rm -rf clickhouse-cpp-2.1.0
+rm -rf ${CLICKHOUSE_INSTALL_PATH}
+tar xvzf clickhouse-cpp-2.2.1.tar.gz
+mkdir -pv ${CLICKHOUSE_INSTALL_PATH}
+cp -R clickhouse-cpp-2.2.1/contrib ${CLICKHOUSE_INSTALL_PATH}
+mkdir clickhouse-cpp-2.2.1/build
+cd clickhouse-cpp-2.2.1/build
+cmake -DCMAKE_CXX_STANDARD=17 -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=${CLICKHOUSE_INSTALL_PATH} ..
+make -j4 && make install
+cd ${ROOT_DIR_PATH}
+rm -rf clickhouse-cpp-2.2.1
+
+#spdlog
+rm -rf ${SPDLOG_INSTALL_PATH}
+tar xvzf spdlog-1.10.0.tar.gz
+cd spdlog-1.10.0
+cmake -DCMAKE_CXX_STANDARD=17 -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=${SPDLOG_INSTALL_PATH} -DSPDLOG_BUILD_SHARED=ON -H. -Bbuild
+cd build
+make -j4 && make install
+cd ${ROOT_DIR_PATH}
+rm -rf spdlog-1.10.0
+
+#catch2
+rm -rf ${CATCH2_INSTALL_PATH}
+tar xvzf Catch2-3.1.0.tar.gz
+cd Catch2-3.1.0
+cmake -DCMAKE_CXX_STANDARD=17 -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=${CATCH2_INSTALL_PATH} -DBUILD_SHARED_LIBS=ON -H. -Bbuild
+cd build
+make -j4 && make install
+cd ${ROOT_DIR_PATH}
+rm -rf Catch2-3.1.0

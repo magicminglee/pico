@@ -141,4 +141,30 @@ private:
     DISABLE_CLASS_COPYABLE(CDecoder);
 };
 
+template <>
+class CDecoder<GRPCMessageHeader> : public CObject {
+public:
+    CDecoder(const char* data, const uint32_t dlen)
+        : m_data(data)
+        , m_dlen(dlen)
+    {
+    }
+    std::tuple<bool, uint32_t, const char*, uint32_t> Decode()
+    {
+        GRPCMessageHeader h;
+        uint32_t offset = 0;
+        h.flags = *(uint8_t*)(m_data + offset);
+        offset += sizeof(uint8_t);
+        CheckCondition(offset < m_dlen, std::make_tuple(false, 0, nullptr, 0));
+        h.datalen = CUtils::Ntoh32(*(uint32_t*)(m_data + offset));
+        offset += sizeof(uint32_t);
+        CheckCondition(offset < m_dlen, std::make_tuple(false, 0, nullptr, 0));
+        return std::make_tuple(true, h.flags, m_data + GRPC_MESSAGE_HEADER_LENGTH, h.DataSize());
+    }
+
+private:
+    const char* m_data;
+    uint32_t m_dlen;
+    DISABLE_CLASS_COPYABLE(CDecoder);
+};
 NAMESPACE_FRAMEWORK_END

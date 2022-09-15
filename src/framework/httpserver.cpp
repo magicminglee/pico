@@ -1,189 +1,169 @@
 #include "httpserver.hpp"
 #include "argument.hpp"
 #include "connection.hpp"
+#include "decoder.hpp"
+#include "encoder.hpp"
 #include "ssl.hpp"
 #include "stringtool.hpp"
 #include "xlog.hpp"
 
-#include <fmt/core.h>
+#include "fmt/core.h"
 
 namespace fs = std::filesystem;
 NAMESPACE_FRAMEWORK_BEGIN
 
 /////////////////////////////////////////////////////////////////////////CWebSocket/////////////////////////////////////////////////////////////
-CHttpParser::~CHttpParser()
-{
-    if (m_req && m_req->GetFd() && m_req->GetFd().value() > 0)
-        close(m_req->GetFd().value());
-    m_req.release();
-    m_rsp.release();
-    if (m_session) {
-        nghttp2_session_del(m_session);
-    }
-}
 
-void CHttpParser::SetNgHttp2Session(nghttp2_session* session)
+namespace {
+int htp_msg_begin(llhttp_t* htp)
 {
-    m_session = session;
-}
-
-int32_t CHttpParser::ParseRequest(std::string_view data)
-{
-    return IsHttp2() ? parseHttp2Request(data) : parseHttp1Request(data);
-}
-
-int32_t CHttpParser::ParseResponse(std::string_view data)
-{
-    return IsHttp2() ? parseHttp2Response(data) : parseHttp1Response(data);
-}
-
-int32_t CHttpParser::parseHttp1Response(std::string_view data)
-{
-    int32_t pret = 0;
-    if (EParserState::EParserState_Begin == m_state) {
-        int minor_version, status;
-        const char* msg;
-        size_t msg_len, num_headers;
-        struct phr_header headers[50];
-        num_headers = sizeof(headers) / sizeof(headers[0]);
-        pret = phr_parse_response(data.data(), data.size(), &minor_version, &status, &msg, &msg_len, headers, &num_headers, 0);
-        if (pret > 0) {
-            GetResponse()->Reset();
-            m_decoder = {};
-            m_decoder.consume_trailer = 1;
-            GetResponse()->SetStatus((ghttp::HttpStatusCode)status);
-            m_state = EParserState::EParserState_Head;
-            for (size_t i = 0; i != num_headers; ++i) {
-                GetResponse()->AddHeader(std::string(headers[i].name, headers[i].name_len), std::string(headers[i].value, headers[i].value_len));
-            }
-        } else if (pret == -1) {
-            m_state = EParserState::EParserState_End;
-            return -1;
-        } else {
-            return 0;
-        }
-    }
-    if (EParserState::EParserState_Head == m_state) {
-        if (GetResponse()->HasHeader("transfer-encoding") && GetResponse()->GetHeaderByKey("transfer-encoding") == "chunked") {
-            auto headlen = pret;
-            size_t rsize = data.length() - headlen;
-            std::unique_ptr<char> buf = std::make_unique<char>(rsize);
-            memcpy(buf.get(), data.data() + headlen, rsize);
-            pret = phr_decode_chunked(&m_decoder, buf.get(), &rsize);
-            if (pret >= 0) {
-                GetResponse()->AppendBody(std::string_view(buf.get(), rsize));
-                m_state = EParserState::EParserState_Body;
-                return data.size() - pret;
-            } else if (pret == -1) {
-                m_state = EParserState::EParserState_End;
-                return -1;
-            }
-        } else if (GetResponse()->HasHeader("content-length")) {
-            size_t bodylen = CStringTool::ToInteger<size_t>(GetResponse()->GetHeaderByKey("content-length").value());
-            if (data.size() >= pret + bodylen) {
-                if (bodylen > 0)
-                    GetResponse()->SetBody(std::string_view(data.data() + pret, bodylen));
-                m_state = EParserState::EParserState_Body;
-                return pret + bodylen;
-            }
-        } else {
-            m_state = EParserState::EParserState_Body;
-            return data.length();
-        }
+    SPDLOG_DEBUG("{}", __FUNCTION__);
+    CHTTPClient* session = static_cast<CHTTPClient*>(htp->data);
+    auto req = session->GetStream(-1).value()->GetRequest();
+    auto rsp = session->GetStream(-1).value()->GetResponse();
+    if (session->IsPassive()) {
+        req->Reset();
+        rsp->Reset();
+    } else {
+        rsp->Reset();
     }
     return 0;
 }
 
-int32_t CHttpParser::parseHttp1Request(std::string_view data)
+int htp_uricb(llhttp_t* htp, const char* data, size_t len)
 {
-    int32_t pret = 0;
-    if (EParserState::EParserState_Begin == m_state) {
-        const char *method, *path;
-        int minor_version;
-        struct phr_header headers[50];
-        size_t method_len, path_len, num_headers;
-        ssize_t rret;
-        num_headers = sizeof(headers) / sizeof(headers[0]);
-        pret = phr_parse_request(data.data(), data.size(), &method, &method_len, &path, &path_len,
-            &minor_version, headers, &num_headers, 0);
-        if (pret > 0) {
-            GetRequest()->Reset();
-            m_state = EParserState::EParserState_Head;
-            auto m = std::string(method, method_len);
-            GetRequest()->SetMethod(ghttp::HttpStrMethod(m).value_or(ghttp::HttpMethod::GET));
-            GetRequest()->SetPath(std::string(path, path_len));
-            for (size_t i = 0; i != num_headers; ++i) {
-                GetRequest()->AddHeader(std::string(headers[i].name, headers[i].name_len), std::string(headers[i].value, headers[i].value_len));
-            }
-        } else if (pret == -1) {
-            m_state = EParserState::EParserState_End;
-            return -1;
-        } else {
-            return 0;
+    CHTTPClient* session = static_cast<CHTTPClient*>(htp->data);
+    session->GetStream(-1).value()->GetRequest()->SetPath(std::string(data, len));
+    SPDLOG_DEBUG("{} {}", __FUNCTION__, std::string(data, len));
+    return 0;
+}
+
+// HTTP response status code
+int htp_statuscb(llhttp_t* htp, const char* at, size_t length)
+{
+    CHTTPClient* session = static_cast<CHTTPClient*>(htp->data);
+    if (htp->status_code / 100 == 1) {
+        return 0;
+    }
+
+    session->GetStream(-1).value()->GetResponse()->SetStatus((ghttp::HttpStatusCode)htp->status_code);
+
+    SPDLOG_DEBUG("{} {}", __FUNCTION__, htp->status_code);
+
+    return 0;
+}
+
+int htp_hdr_keycb(llhttp_t* htp, const char* data, size_t len)
+{
+    CHTTPClient* session = static_cast<CHTTPClient*>(htp->data);
+    if (session->IsPassive()) {
+        session->GetStream(-1).value()->GetRequest()->AddHeader(std::string(data, len), std::string(""));
+    } else {
+        session->GetStream(-1).value()->GetResponse()->AddHeader(std::string(data, len), std::string(""));
+    }
+    SPDLOG_DEBUG("{} {}", __FUNCTION__, std::string(data, len));
+    return 0;
+}
+
+int htp_hdr_valcb(llhttp_t* htp, const char* data, size_t len)
+{
+    CHTTPClient* session = static_cast<CHTTPClient*>(htp->data);
+    if (session->IsPassive()) {
+        session->GetStream(-1).value()->GetRequest()->AddHeader(std::string(""), std::string(data, len));
+    } else {
+        session->GetStream(-1).value()->GetResponse()->AddHeader(std::string(""), std::string(data, len));
+    }
+    SPDLOG_DEBUG("{} {}", __FUNCTION__, std::string(data, len));
+    return 0;
+}
+
+int htp_hdrs_completecb(llhttp_t* htp)
+{
+    CHTTPClient* session = static_cast<CHTTPClient*>(htp->data);
+    if (session->IsPassive()) {
+        session->GetStream(-1).value()->GetRequest()->SetMethod((ghttp::HttpMethod)(1 << htp->method));
+        session->GetStream(-1).value()->GetRequest()->SetMajor(htp->http_major);
+        session->GetStream(-1).value()->GetRequest()->SetMinor(htp->http_minor);
+    } else {
+        session->GetStream(-1).value()->GetResponse()->SetMajor(htp->http_major);
+        session->GetStream(-1).value()->GetResponse()->SetMinor(htp->http_minor);
+        if (ghttp::HttpMethod::CONNECT == session->GetStream(-1).value()->GetRequest()->GetMethod()) {
+            SPDLOG_INFO("proxy connected");
+            session->Response(-1);
         }
     }
-    if (EParserState::EParserState_Head == m_state) {
-        if (GetRequest()->HasHeader("transfer-encoding") && GetRequest()->GetHeaderByKey("transfer-encoding") == "chunked") {
-            auto headlen = pret;
-            size_t rsize = data.length() - headlen;
-            std::unique_ptr<char> buf = std::make_unique<char>(rsize);
-            memcpy(buf.get(), data.data() + headlen, rsize);
-            pret = phr_decode_chunked(&m_decoder, buf.get(), &rsize);
-            if (pret >= 0) {
-                GetRequest()->AppendBody(std::string_view(buf.get(), rsize));
-                m_state = EParserState::EParserState_Body;
-                return data.size() - pret;
-            } else if (pret == -1) {
-                m_state = EParserState::EParserState_End;
-                return -1;
-            }
-        } else if (GetRequest()->HasHeader("content-length")) {
-            size_t bodylen = CStringTool::ToInteger<size_t>(GetRequest()->GetHeaderByKey("content-length").value());
-            if (data.size() >= pret + bodylen) {
-                if (bodylen > 0)
-                    GetRequest()->SetBody(std::string(data.data() + pret, bodylen));
-                m_state = EParserState::EParserState_Body;
-                return pret + bodylen;
+    SPDLOG_DEBUG("{}", __FUNCTION__);
+
+    return 0;
+}
+
+int htp_bodycb(llhttp_t* htp, const char* data, size_t len)
+{
+    CHTTPClient* session = static_cast<CHTTPClient*>(htp->data);
+    if (session->IsPassive()) {
+        session->GetStream(-1).value()->GetRequest()->AppendBody(std::string_view(data, len));
+    } else {
+        session->GetStream(-1).value()->GetResponse()->AppendBody(std::string_view(data, len));
+    }
+    SPDLOG_DEBUG("{} {}", __FUNCTION__, std::string(data, len));
+    return 0;
+}
+
+int htp_msg_completecb(llhttp_t* htp)
+{
+    SPDLOG_DEBUG("{}", __FUNCTION__);
+    CHTTPClient* session = static_cast<CHTTPClient*>(htp->data);
+    auto req = session->GetStream(-1).value()->GetRequest();
+    auto rsp = session->GetStream(-1).value()->GetResponse();
+    if (session->IsPassive()) {
+        auto filter = session->GetHttpServer()->GetFilter(req->GetPath());
+        auto cmd = (uint32_t)req->GetMethod();
+        if (filter) {
+            if (0 == ((uint32_t)(filter.value()->cmd) & cmd)) {
+                rsp->Response({ ghttp::HttpStatusCode::BADREQUEST, "" });
+            } else {
+                auto r = session->GetHttpServer()->EmitEvent("start", req, rsp);
+                if (r) {
+                    rsp->Response({ r.value().first, ghttp::HttpReason(r.value().first).value_or("") });
+                } else {
+                    auto res = filter.value()->cb(req, rsp);
+                    if (res) {
+                        session->GetHttpServer()->EmitEvent("finish", req, rsp);
+                    }
+                }
             }
         } else {
-            m_state = EParserState::EParserState_Body;
-            return data.length();
+            rsp->SendFile(req->GetPath());
         }
+    } else {
+        session->Response(-1);
     }
     return 0;
 }
 
-int32_t CHttpParser::parseHttp2Request(std::string_view data)
+int htp_status_complete(llhttp_t* htp)
 {
-    ssize_t readlen = nghttp2_session_mem_recv(m_session, (const uint8_t*)data.data(), data.size());
-    if (readlen < 0) {
-        CERROR("Fatal error: %s", nghttp2_strerror((int)readlen));
-        return -1;
-    }
+    SPDLOG_DEBUG("{}", __FUNCTION__);
+    return 0;
+}
 
-    int32_t rv = nghttp2_session_send(m_session);
-    if (rv != 0) {
-        CERROR("Fatal error: %s", nghttp2_strerror(rv));
-        return -1;
-    }
-    return readlen;
+constexpr llhttp_settings_t htp_hooks = {
+    htp_msg_begin, // llhttp_cb on_message_begin;
+    htp_uricb, // llhttp_data_cb on_url;
+    htp_statuscb, // llhttp_data_cb on_status;
+    htp_hdr_keycb, // llhttp_data_cb on_header_field;
+    htp_hdr_valcb, // llhttp_data_cb on_header_value;
+    htp_hdrs_completecb, // llhttp_cb on_headers_complete;
+    htp_bodycb, // llhttp_data_cb on_body;
+    htp_msg_completecb, // llhttp_cb on_message_complete;
+    nullptr, // llhttp_cb on_chunk_header;
+    nullptr, // llhttp_cb on_chunk_complete;
+    nullptr, // llhttp_cb on_url_complete;
+    htp_status_complete, // llhttp_cb on_status_complete;
+    nullptr, // llhttp_cb on_header_field_complete;
+    nullptr // llhttp_cb on_header_value_complete;
 };
-
-int32_t CHttpParser::parseHttp2Response(std::string_view data)
-{
-    ssize_t readlen = nghttp2_session_mem_recv(m_session, (const uint8_t*)data.data(), data.size());
-    if (readlen < 0) {
-        CERROR("Fatal error: %s", nghttp2_strerror((int)readlen));
-        return -1;
-    }
-
-    int32_t rv = nghttp2_session_send(m_session);
-    if (rv != 0) {
-        CERROR("Fatal error: %s", nghttp2_strerror(rv));
-        return -1;
-    }
-    return readlen;
-};
+} // namespace
 
 /////////////////////////////////////////////////////////////////////////CWebSocket/////////////////////////////////////////////////////////////
 CWebSocket* CWebSocket::Upgrade(ghttp::CResponse* rsp, Callback rdfunc)
@@ -197,7 +177,7 @@ CWebSocket* CWebSocket::Upgrade(ghttp::CResponse* rsp, Callback rdfunc)
     }
     ws->m_rdfunc = std::move(rdfunc);
     ws->m_parser.SetStatus(CWSParser::WS_STATUS::WS_CONNECTED);
-    CDEBUG("CWebSocket::Upgrade");
+    SPDLOG_DEBUG("CWebSocket::Upgrade");
     return ws;
 }
 
@@ -217,20 +197,12 @@ CWebSocket::~CWebSocket()
 bool CWebSocket::Connect(const std::string& url, Callback cb)
 {
     auto [_, host, port, path] = CConnection::SplitUri(url);
-    auto key = CWSParser::GenSecWebSocketAccept(std::to_string(time(nullptr)));
+    auto key = CWSParser::GenSecWebSocketAccept(MYARGS.ConfMap["websocketkey"]);
     return (bool)CHTTPClient::Emit(
         url,
-        [key, cb](ghttp::CResponse* rsp) {
-            // CDEBUG("onWSData %s", rsp->DebugStr().c_str());
-            auto seckey = rsp->GetHeaderByKey("sec-websocket-accept");
-            if (seckey) {
-                auto sk = std::string(seckey.value().data(), seckey.value().length());
-                if (sk == CWSParser::GenSecWebSocketAccept(key)) {
-                    CWebSocket::Upgrade(rsp, cb);
-                    return true;
-                }
-            }
-            return false;
+        [cb](ghttp::CResponse* rsp) {
+            rsp->Conn()->SetWSCallback(cb);
+            return true;
         },
         ghttp::HttpMethod::GET,
         std::nullopt,
@@ -249,7 +221,6 @@ bool CWebSocket::SendCmd(const CWSParser::WS_OPCODE opcode, std::string_view dat
         return false;
     if (auto res = m_parser.Frame(data.data(), data.length(), opcode, m_parser.GetMaskingKey()); res) {
         for (auto&& v : res.value()) {
-            CDEBUG("CWebSocket::SendCmd");
             return m_evcon->SendCmd(v.data(), v.length());
         }
     }
@@ -297,18 +268,45 @@ void CWebSocket::onWrite(struct bufferevent* bev, void* arg)
 {
     CWebSocket* self = (CWebSocket*)arg;
     if (self->m_parser.IsClose()) {
-        CDEBUG("%s is closed", __FUNCTION__);
+        SPDLOG_DEBUG("{} is closed", __FUNCTION__);
         CDEL(self);
     }
 }
 
 void CWebSocket::onError(struct bufferevent* bev, short which, void* arg)
 {
-    CDEBUG("%s", __FUNCTION__);
     CWebSocket* self = (CWebSocket*)arg;
+    SPDLOG_INFO("CTX:{} {} {},{},0x{:x},{}", MYARGS.CTXID, __FUNCTION__, fmt::ptr(self->m_evcon), self->m_evcon->Id(), which, fmt::ptr(bev));
     CDEL(self);
 }
 
+void CHTTPClient::OnWebsocket()
+{
+    auto req = GetStream(-1).value()->GetRequest();
+    auto rsp = GetStream(-1).value()->GetResponse();
+    if (IsPassive()) {
+        const auto& seckey = req->GetHeaderByKey("sec-websocket-key");
+        if (!seckey.empty()) {
+            auto&& swsk = CWSParser::GenSecWebSocketAccept(seckey);
+            rsp->AddHeader("Connection", "upgrade");
+            rsp->AddHeader("Sec-WebSocket-Accept", swsk);
+            rsp->AddHeader("Upgrade", "websocket");
+            rsp->Response({ ghttp::HttpStatusCode::SWITCH, "" });
+            CWebSocket::Upgrade(rsp, m_wsfunc);
+            return;
+        }
+    } else {
+        const auto& seckey = rsp->GetHeaderByKey("sec-websocket-accept");
+        if (!seckey.empty()) {
+            const auto&& key = CWSParser::GenSecWebSocketAccept(MYARGS.ConfMap["websocketkey"]);
+            if (seckey == CWSParser::GenSecWebSocketAccept(key)) {
+                CWebSocket::Upgrade(rsp, m_wsfunc);
+                return;
+            }
+        }
+    }
+    rsp->Response({ ghttp::HttpStatusCode::FORBIDDEN, "" });
+}
 ///////////////////////////////////////////////////////////////CHTTPServer////////////////////////////////////////////////////////
 CHTTPServer::~CHTTPServer()
 {
@@ -323,24 +321,48 @@ void CHTTPServer::destroy()
 {
 }
 
+bool CHTTPServer::OnConnected(std::string host, const int32_t fd)
+{
+    CheckCondition(!host.empty(), true);
+
+    CHTTPClient* hclient = CNEW CHTTPClient();
+    CConnectionHandler* h = CNEW CConnectionHandler();
+    h->Register(
+        [hclient](std::string_view data) {
+            auto result = hclient->GetParser().ParseHttpMsg(hclient, data);
+            if (result < 0) {
+                SPDLOG_ERROR("CHTTPServer::OnConnected ParseRequest {} {}", hclient->GetConnection()->GetPeerIp(), data);
+            }
+            return result;
+        },
+        [hclient]() {
+            CHTTPClient::OnWrite(hclient);
+        },
+        [hclient](const EnumConnEventType e) {
+            if (e == EnumConnEventType::EnumConnEventType_Connected) {
+            } else if (e == EnumConnEventType::EnumConnEventType_Closed) {
+                delete hclient;
+            }
+        });
+    if (h->Init(fd, host)) {
+        hclient->Init(h->Connection(), this);
+        struct timeval rwtv = { MYARGS.HttpTimeout.value_or(60), 0 };
+        bufferevent_set_timeouts(hclient->GetConnection()->GetBufEvent(), &rwtv, &rwtv);
+        return true;
+    }
+    CDEL(hclient);
+    CDEL(h);
+    return false;
+}
+
 void CHTTPServer::ServeWs(const std::string path, CWebSocket::Callback cb)
 {
     Register(
         path,
         ghttp::HttpMethod::GET,
         [cb](const ghttp::CRequest* req, ghttp::CResponse* rsp) {
-            auto v = req->GetHeaderByKey("sec-websocket-key");
-            if (v) {
-                std::string swsk(v.value().data(), v.value().length());
-                swsk = CWSParser::GenSecWebSocketAccept(swsk);
-                rsp->AddHeader("Connection", "upgrade");
-                rsp->AddHeader("Sec-WebSocket-Accept", swsk);
-                rsp->AddHeader("Upgrade", "websocket");
-                rsp->Response({ ghttp::HttpStatusCode::SWITCH, "" });
-                CWebSocket::Upgrade(rsp, cb);
-                return true;
-            }
-            return rsp->Response({ ghttp::HttpStatusCode::FORBIDDEN, "" });
+            const_cast<ghttp::CRequest*>(req)->Conn()->SetWSCallback(cb);
+            return true;
         });
 }
 
@@ -356,7 +378,7 @@ bool CHTTPServer::Register(const std::string path, ghttp::HttpMethod cmd, ghttp:
     return Register(path, filter);
 }
 
-bool CHTTPServer::Emit(const std::string path, ghttp::CRequest* req, ghttp::CResponse* rsp)
+bool CHTTPServer::Emit(const std::string& path, ghttp::CRequest* req, ghttp::CResponse* rsp)
 {
     if (auto it = m_callbacks.find(path); it != m_callbacks.end()) {
         return it->second.cb(req, rsp);
@@ -387,105 +409,76 @@ std::optional<CHTTPServer::FilterData*> CHTTPServer::GetFilter(const std::string
     return std::nullopt;
 }
 
-bool CHTTPServer::ListenAndServe(std::string host)
-{
-    CheckCondition(!host.empty(), true);
-
-    return m_tcpserver.ListenAndServe(host, [this, host](const int32_t fd) {
-        CHTTPClient* hclient = CNEW CHTTPClient();
-        CConnectionHandler* h = CNEW CConnectionHandler();
-        h->Register(
-            [this, hclient](std::string_view data) {
-                auto ret = hclient->GetParser().ParseRequest(data);
-                if (ret == -1) {
-                    delete hclient;
-                } else if (!hclient->IsHttp2() && ret > 0) {
-                    auto req = hclient->GetParser().GetRequest();
-                    auto rsp = hclient->GetParser().GetResponse();
-                    auto filter = this->GetFilter(req->GetPath().value_or(""));
-                    auto cmd = (uint32_t)req->GetMethod();
-                    // CDEBUG("request %s", req->DebugStr().c_str());
-                    if (filter) {
-                        if (0 == ((uint32_t)(filter.value()->cmd) & cmd)) {
-                            rsp->Response({ ghttp::HttpStatusCode::BADREQUEST, "" });
-                        } else {
-                            auto r = this->EmitEvent("start", req, rsp);
-                            if (r) {
-                                rsp->Response({ r.value().first, ghttp::HttpReason(r.value().first).value_or("") });
-                            } else {
-                                auto res = filter.value()->cb(req, rsp);
-                                if (res) {
-                                    this->EmitEvent("finish", req, rsp);
-                                }
-                            }
-                        }
-                    } else {
-                        rsp->SendFile(req->GetPath().value_or(""));
-                    }
-                }
-                return ret;
-            },
-            [hclient]() {
-                CHTTPClient::OnWrite(hclient);
-            },
-            [hclient](const EnumConnEventType e) {
-                if (e == EnumConnEventType::EnumConnEventType_Connected) {
-                    auto ish2 = hclient->CheckHttp2();
-                    if (ish2) {
-                        hclient->InitNghttp2SessionData();
-                    }
-                } else if (e == EnumConnEventType::EnumConnEventType_Closed) {
-                    delete hclient;
-                }
-            });
-        if (h->Init(fd, host))
-            hclient->Init(h->Connection(), this);
-    });
-}
-
-bool CHTTPServer::setOption(const int32_t fd)
-{
-    if (evutil_make_listen_socket_reuseable(fd) < 0)
-        return false;
-    if (evutil_make_listen_socket_reuseable_port(fd) < 0)
-        return false;
-    if (evutil_make_socket_nonblocking(fd) < 0)
-        return false;
-#if defined(LINUX_PLATFORMOS) || defined(DARWIN_PLATFORMOS)
-    int32_t flags = 1;
-    int32_t error = ::setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, (const char*)&flags, sizeof(flags));
-    if (0 != error)
-        return false;
-#endif
-    return true;
-}
-
 ///////////////////////////////////////////////////////////////CHTTPClient/////////////////////////////////////////////////////////////////////////
+CHTTPClient::CHTTPClient()
+{
+    llhttp_init(&m_parser.GetParser(), HTTP_BOTH, &htp_hooks);
+    m_parser.GetParser().data = this;
+}
+
 CHTTPClient::~CHTTPClient()
 {
+    if (m_session)
+        nghttp2_session_del(m_session);
 }
 
 void CHTTPClient::Init(CConnection* conn, CHTTPServer* server)
 {
     SetConnection(conn);
     SetHttpServer(server);
-    GetParser().SetRequest(CNEW ghttp::CRequest());
-    GetParser().SetResponse(CNEW ghttp::CResponse(this));
+    m_base_stream.reset(CNEW ghttp::CStream(-1, this));
 }
 
-bool CHTTPClient::Request()
+bool CHTTPClient::Request(ghttp::HttpMethod method, std::string_view body, std::map<std::string, std::string> header)
 {
-    auto ish2 = CheckHttp2();
-    if (ish2) {
-        InitNghttp2SessionData();
-        if (!m_evcon->IsPassive()) {
-            // CWorker::MAIN_CONTEX->AddPersistEvent(1, 2000, [this]() { this->submitRequest(); });
-            return submitRequest();
+    ghttp::CStream h2stream(-1, this);
+    ghttp::CStream* stream = &h2stream;
+    if (!IsHttp2()) {
+        stream = m_base_stream.get();
+    }
+    auto [scheme, hostname, port, path] = CConnection::SplitUri(GetURL());
+    if (m_is_useproxy && !m_proxy_connected) {
+        stream->GetRequest()->SetMethod(ghttp::HttpMethod::CONNECT);
+        stream->GetRequest()->SetScheme(scheme);
+        stream->GetRequest()->SetHost(fmt::format("{}:{}", hostname, port));
+        stream->GetRequest()->SetPort(port);
+        stream->GetRequest()->SetPath(fmt::format("{}:{}", hostname, port));
+        stream->GetRequest()->AddHeader("Proxy-Connection", "keep-alive");
+        stream->GetRequest()->AddHeader("User-Agent", "PICO-v1.0");
+        stream->GetRequest()->AddHeader("Host", fmt::format("{}:{}", hostname, port));
+    } else {
+        for (auto& [k, v] : header) {
+            stream->GetRequest()->AddHeader(k, v);
         }
+        stream->GetRequest()->AddHeader("Host", fmt::format("{}:{}", hostname, port));
+        stream->GetRequest()->SetMethod(method);
+        stream->GetRequest()->SetScheme(scheme);
+        stream->GetRequest()->SetHost(hostname);
+        stream->GetRequest()->SetPort(port);
+        if (scheme == "http" && m_is_useproxy) {
+            stream->GetRequest()->SetPath(GetURL());
+        } else {
+            stream->GetRequest()->SetPath(path);
+        }
+        if (stream->GetRequest()->IsGRPC()) {
+            CEncoder<GRPCMessageHeader> enc;
+            if (!body.empty()) {
+                auto res = enc.Encode(0, body.data(), body.length());
+                if (res)
+                    stream->GetRequest()->AppendBody(res.value());
+            }
+        } else {
+            if (!body.empty())
+                stream->GetRequest()->SetBodyByView(body);
+        }
+    }
+
+    if (IsHttp2()) {
+        return submitRequest(stream);
     } else {
         std::map<std::string, std::string> headers;
-        GetParser().GetRequest()->GetAllHeaders(headers);
-        std::string httprsp = fmt::format("{} {} HTTP/1.1\r\n", ghttp::HttpMethodStr(GetParser().GetRequest()->GetMethod()).value_or(""), GetParser().GetRequest()->GetPath().value());
+        stream->GetRequest()->GetAllHeaders(headers);
+        std::string httprsp = fmt::format("{} {} HTTP/1.1\r\n", ghttp::HttpMethodStr(stream->GetRequest()->GetMethod()).value_or(""), stream->GetRequest()->GetPath());
         for (auto& [k, v] : headers) {
             if (k == "sec-websocket-key") {
                 // compatible with case sensitive
@@ -494,10 +487,11 @@ bool CHTTPClient::Request()
                 httprsp += fmt::format("{}: {}\r\n", k, v);
             }
         }
-        httprsp += fmt::format("Content-Length: {}\r\n", GetParser().GetRequest()->GetBody().value_or("").size());
+        httprsp += fmt::format("Content-Length: {}\r\n", stream->GetRequest()->GetBody().size());
         httprsp += fmt::format("\r\n");
-        if (GetParser().GetRequest()->GetBody())
-            httprsp.append(GetParser().GetRequest()->GetBody().value());
+        if (!stream->GetRequest()->GetBody().empty())
+            httprsp.append(stream->GetRequest()->GetBody());
+        SPDLOG_DEBUG("{} {}", __FUNCTION__, httprsp);
         GetConnection()->SendCmd(httprsp.data(), httprsp.size());
     }
     return true;
@@ -509,72 +503,92 @@ std::optional<CHTTPClient*> CHTTPClient::Emit(std::string_view url,
     std::optional<std::string> body,
     std::map<std::string, std::string> header)
 {
+    CConnectionHandler* h = CNEW CConnectionHandler();
     CHTTPClient* hclient = CNEW CHTTPClient();
     hclient->m_callback = cb;
     hclient->m_url = std::string(url.data(), url.size());
+    std::string conurl = hclient->GetURL();
 
-    CConnectionHandler* h = CNEW CConnectionHandler();
+    if (auto proxy = MYARGS.ConfMap.find("httpproxy"); proxy != std::end(MYARGS.ConfMap)) {
+        conurl = proxy->second;
+        hclient->m_is_useproxy = true;
+        auto [scheme, hostname, port, path] = CConnection::SplitUri(hclient->GetURL());
+        auto ns = hostname;
+        auto sch = scheme;
+        hclient->m_proxy_callback = [hclient, h, ns, sch, header, body, method](ghttp::CResponse* response) {
+            if (response->GetStatus() == ghttp::HttpStatusCode::OK) {
+                // proxy connected
+                SPDLOG_DEBUG("Proxy Connected {} {}", hclient->m_need_connect_proxy, hclient->m_proxy_connected);
+                hclient->m_proxy_connected = true;
+                if (auto it = header.find("content-type"); hclient->CheckHttp2() || (it != std::end(header) && 0 == it->second.find("application/grpc"))) {
+                    if (!hclient->GetNGHttp2Session()) {
+                        hclient->InitNghttp2SessionData();
+                    }
+                }
+                if (sch == "https" || sch == "wss") {
+                    h->InitProxy(ns);
+                } else {
+                    // non tls sending request directly
+                    hclient->Request(method, body.value_or(""), header);
+                }
+            }
+            return true;
+        };
+    }
     h->Register(
         [hclient](std::string_view data) {
-            int32_t ret = hclient->GetParser().ParseResponse(data);
-            if (ret == -1) {
-                delete hclient;
-            } else if (!hclient->IsHttp2() && ret > 0) {
-                hclient->Response();
+            auto result = hclient->GetParser().ParseHttpMsg(hclient, data);
+            if (result < 0) {
+                SPDLOG_ERROR("CHTTPClient::Emit ParseResponse {} {}", hclient->GetConnection()->GetPeerIp(), data);
             }
-            return ret;
+            return result;
         },
         [hclient]() {
             CHTTPClient::OnWrite(hclient);
         },
-        [hclient, method, body, header](const EnumConnEventType e) {
+        [hclient, method, body, header, h](const EnumConnEventType e) {
             if (e == EnumConnEventType::EnumConnEventType_Connected) {
-                auto [scheme, hostname, port, path] = CConnection::SplitUri(hclient->GetURL());
-                for (auto& [k, v] : header) {
-                    hclient->GetParser().GetRequest()->AddHeader(k, v);
+                if (hclient->m_proxy_connected) {
+                    hclient->GetParser().Reset();
+                    h->EnableProxy();
                 }
-                hclient->GetParser().GetRequest()->SetMethod(method);
-                hclient->GetParser().GetRequest()->SetScheme(scheme);
-                hclient->GetParser().GetRequest()->SetHost(hostname);
-                hclient->GetParser().GetRequest()->SetPort(port);
-                hclient->GetParser().GetRequest()->SetPath(path);
-                if (body)
-                    hclient->GetParser().GetRequest()->SetBody(body.value());
-
-                hclient->Request();
+                // check h2 if tls connected.
+                if (auto it = header.find("content-type"); hclient->CheckHttp2() || (!hclient->m_is_useproxy && it != std::end(header) && 0 == it->second.find("application/grpc"))) {
+                    if (!hclient->GetNGHttp2Session()) {
+                        hclient->InitNghttp2SessionData();
+                    }
+                }
+                SPDLOG_DEBUG("Client Connected {}", hclient->m_proxy_connected);
+                hclient->Request(method, body.value_or(""), header);
             } else if (e == EnumConnEventType::EnumConnEventType_Closed) {
                 delete hclient;
             }
         });
-    if (h->Connect(hclient->m_url))
+    if (h->Connect(conurl)) {
         hclient->Init(h->Connection(), nullptr);
+        struct timeval rwtv = { MYARGS.HttpTimeout.value_or(60), 0 };
+        bufferevent_set_timeouts(hclient->GetConnection()->GetBufEvent(), &rwtv, &rwtv);
+    }
 
     return hclient;
 }
 
-std::map<std::string, std::string> CHTTPClient::getHttp2Header()
+void CHTTPClient::Response(const int32_t streamid)
 {
-    std::map<std::string, std::string> header = {};
-    header[":method"] = ghttp::HttpMethodStr(GetParser().GetRequest()->GetMethod()).value_or("");
-    header[":scheme"] = GetParser().GetRequest()->GetScheme().value_or("");
-    header[":authority"] = GetParser().GetRequest()->GetHost().value_or("") + ":" + GetParser().GetRequest()->GetPort().value_or("");
-    header[":path"] = GetParser().GetRequest()->GetPath().value_or("");
-    GetParser().GetRequest()->GetAllHeaders(header);
-
-    return header;
-}
-
-void CHTTPClient::Response()
-{
-    if (m_callback)
-        m_callback(GetParser().GetResponse());
-    m_callback = nullptr;
+    if (m_proxy_callback) {
+        GetStream(streamid).value()->GetRequest()->Reset();
+        m_proxy_callback(GetStream(-1).value()->GetResponse());
+        m_proxy_callback = nullptr;
+    } else if (m_callback) {
+        m_callback(GetStream(streamid).value()->GetResponse());
+        m_callback = nullptr;
+    }
 }
 
 void CHTTPClient::OnWrite(CHTTPClient* hclient)
 {
     if (hclient->m_session) {
-        if (hclient->isPassive()) {
+        if (hclient->IsPassive()) {
             if (nghttp2_session_want_read(hclient->m_session) == 0 && nghttp2_session_want_write(hclient->m_session) == 0) {
                 CDEL(hclient);
                 return;
@@ -609,19 +623,9 @@ bool CHTTPClient::CheckHttp2()
     if (!alpn || alpnlen != 2 || memcmp("h2", alpn, 2) != 0) {
         return false;
     }
-    CDEBUG("%s %s http2 is enabled and h2 is negotiated success %d", MYARGS.CTXID.c_str(), __FUNCTION__, isserver);
+    SPDLOG_DEBUG("{} {} http2 is enabled and h2 is negotiated success {}", MYARGS.CTXID, __FUNCTION__, isserver);
 
     return true;
-}
-
-ssize_t CHTTPClient::onDataSourceReadCallback(nghttp2_session* session, int32_t stream_id, uint8_t* buf, size_t length, uint32_t* data_flags, nghttp2_data_source* source, void* user_data)
-{
-    std::string* data = (std::string*)source->ptr;
-    auto size = data->size();
-    memcpy(buf, data->data(), data->size());
-    *data_flags |= nghttp2_data_flag::NGHTTP2_DATA_FLAG_EOF;
-    CDEL(data);
-    return size;
 }
 
 ssize_t CHTTPClient::sendCallback(nghttp2_session* session, const uint8_t* data, size_t length, int flags, void* user_data)
@@ -639,26 +643,33 @@ ssize_t CHTTPClient::sendCallback(nghttp2_session* session, const uint8_t* data,
     return (ssize_t)length;
 }
 
-int CHTTPClient::onRequestRecv(ghttp::CRequest* req)
+int CHTTPClient::onRequestRecv(ghttp::CStream* stream)
 {
-    if (req->GetPath()) {
-        // CDEBUG("%s %s %d", MYARGS.CTXID.c_str(), __FUNCTION__, req->GetStreamId().value());
-        ghttp::CResponse rsp(this);
-        auto r = m_httpserver->EmitEvent("start", req, &rsp);
-        if (r) {
-            SendResponse(req, r.value().first, {}, r.value().second);
-            return 0;
+    auto req = stream->GetRequest();
+    auto rsp = stream->GetResponse();
+    if (!req->GetPath().empty()) {
+        SPDLOG_DEBUG("{} {} {} {}", MYARGS.CTXID, __FUNCTION__, req->GetStreamId().value(), req->GetPath());
+        if (!req->IsGRPC()) {
+            auto r = m_httpserver->EmitEvent("start", req, rsp);
+            if (r) {
+                H2Response(req, r.value().first, {}, r.value().second);
+                return 0;
+            }
+        } else {
+            CDecoder<GRPCMessageHeader> dec(req->GetBody().data(), req->GetBody().length());
+            auto [ret, flag, msg, msglen] = dec.Decode();
+            req->SetBodyByView(std::string_view((char*)msg, msglen));
         }
 
-        if (!m_httpserver->Emit(req->GetPath().value(), req, &rsp)) {
-            fs::path f = MYARGS.WebRootDir.value_or(fs::current_path()) + req->GetPath().value();
+        if (!m_httpserver->Emit(req->GetPath(), req, rsp)) {
+            fs::path f = MYARGS.WebRootDir.value_or(fs::current_path()) + req->GetPath();
             if (!fs::exists(f)) {
-                SendResponse(req, ghttp::HttpStatusCode::NOTFOUND, {}, ghttp::HttpReason(ghttp::HttpStatusCode::NOTFOUND).value_or(""));
+                H2Response(req, ghttp::HttpStatusCode::NOTFOUND, {}, ghttp::HttpReason(ghttp::HttpStatusCode::NOTFOUND).value_or(""));
                 return 0;
             }
             auto mime = ghttp::GetMiMe(f.extension());
             if (!mime) {
-                SendResponse(req, ghttp::HttpStatusCode::NOTFOUND, {}, ghttp::HttpReason(ghttp::HttpStatusCode::NOTFOUND).value_or(""));
+                H2Response(req, ghttp::HttpStatusCode::NOTFOUND, {}, ghttp::HttpReason(ghttp::HttpStatusCode::NOTFOUND).value_or(""));
                 return 0;
             }
             auto hfd = fopen(f.c_str(), "r");
@@ -670,10 +681,12 @@ int CHTTPClient::onRequestRecv(ghttp::CRequest* req)
                 sendFile(req, ghttp::HttpStatusCode::OK, header, fileno(hfd));
                 return 0;
             }
-            SendResponse(req, ghttp::HttpStatusCode::NOTFOUND, {}, ghttp::HttpReason(ghttp::HttpStatusCode::NOTFOUND).value_or(""));
+            H2Response(req, ghttp::HttpStatusCode::NOTFOUND, {}, ghttp::HttpReason(ghttp::HttpStatusCode::NOTFOUND).value_or(""));
             return 0;
         }
-        m_httpserver->EmitEvent("finish", req, &rsp);
+        m_httpserver->EmitEvent("finish", req, rsp);
+    } else {
+        req->Reset();
     }
     return 0;
 }
@@ -687,7 +700,7 @@ int CHTTPClient::onFrameRecvCallback(nghttp2_session* session, const nghttp2_fra
         case NGHTTP2_HEADERS:
             /* Check that the client request has finished */
             if (frame->hd.flags & NGHTTP2_FLAG_END_STREAM) {
-                ghttp::CRequest* stream_data = (ghttp::CRequest*)nghttp2_session_get_stream_user_data(session_data->m_session, frame->hd.stream_id);
+                ghttp::CStream* stream_data = (ghttp::CStream*)nghttp2_session_get_stream_user_data(session, frame->hd.stream_id);
                 /* For DATA and HEADERS frame, this callback may be called after
                    onstreamclosecallback. Check that stream still alive. */
                 if (!stream_data) {
@@ -701,11 +714,12 @@ int CHTTPClient::onFrameRecvCallback(nghttp2_session* session, const nghttp2_fra
         }
     } else {
         switch (frame->hd.type) {
-        case NGHTTP2_HEADERS:
-            if (frame->headers.cat == NGHTTP2_HCAT_RESPONSE && session_data->GetParser().GetRequest()->GetStreamId().value_or(-1) == frame->hd.stream_id) {
-                // CDEBUG("All headers received");
+        case NGHTTP2_HEADERS: {
+            ghttp::CStream* stream_data = (ghttp::CStream*)nghttp2_session_get_stream_user_data(session, frame->hd.stream_id);
+            if (frame->headers.cat == NGHTTP2_HCAT_RESPONSE && stream_data->GetStreamId() == frame->hd.stream_id) {
+                SPDLOG_DEBUG("All headers received");
             }
-            break;
+        } break;
         default:
             break;
         }
@@ -718,16 +732,30 @@ int CHTTPClient::onDataChunkRecvCallback(nghttp2_session* session,
 {
     CHTTPClient* session_data = (CHTTPClient*)user_data;
     if (session_data->m_httpserver) {
-        ghttp::CRequest* stream_data = (ghttp::CRequest*)nghttp2_session_get_stream_user_data(session, stream_id);
+        ghttp::CStream* stream_data = (ghttp::CStream*)nghttp2_session_get_stream_user_data(session, stream_id);
         if (!stream_data) {
             return 0;
         }
-        stream_data->SetBody(std::string((char*)data, len));
+        stream_data->GetRequest()->AppendBody(std::string_view((char*)data, len));
     } else {
-        if (session_data->GetParser().GetRequest()->GetStreamId().value_or(-1) == stream_id) {
-            session_data->GetParser().GetResponse()->SetBody(std::string_view((const char*)data, len));
-            session_data->Response();
-            CDEBUG("All data received %s", data);
+        ghttp::CStream* stream_data = (ghttp::CStream*)nghttp2_session_get_stream_user_data(session, stream_id);
+        if (stream_data->GetRequest()->GetStreamId().value_or(-1) == stream_id) {
+            stream_data->GetResponse()->AppendBody(std::string_view((const char*)data, len));
+            if (stream_data->GetResponse()->IsGRPC()) {
+                CDecoder<GRPCMessageHeader> dec(stream_data->GetResponse()->GetBody().value().data(),
+                    stream_data->GetResponse()->GetBody().value().length());
+                auto [ret, flag, msg, msglen] = dec.Decode();
+                SPDLOG_DEBUG("All data received {} {} {} {}", fmt::ptr(stream_data->GetRequest()), flag, len, msglen);
+                if (msglen + GRPC_MESSAGE_HEADER_LENGTH > stream_data->GetResponse()->GetBody().value_or("").length())
+                    return 0;
+                stream_data->GetResponse()->SetBody(std::string_view((const char*)msg, msglen));
+            } else {
+                auto content_length = CStringTool::ToInteger<size_t>(stream_data->GetResponse()->GetHeaderByKey("content-length"));
+                if (content_length > stream_data->GetResponse()->GetBody().value_or("").length())
+                    return 0;
+            }
+            SPDLOG_DEBUG("All data received {} {} {}", flags, stream_id, stream_data->GetResponse()->GetBody().value_or("").length());
+            session_data->Response(stream_id);
         }
     }
     return 0;
@@ -739,20 +767,23 @@ int CHTTPClient::onStreamCloseCallback(nghttp2_session* session, int32_t stream_
     (void)error_code;
 
     if (session_data->m_httpserver) {
-        ghttp::CRequest* stream_data = (ghttp::CRequest*)nghttp2_session_get_stream_user_data(session, stream_id);
+        ghttp::CStream* stream_data = (ghttp::CStream*)nghttp2_session_get_stream_user_data(session, stream_id);
         if (!stream_data) {
             return 0;
         }
-        // CDEBUG("%s ServerStream %d closed with error_code=%u errstr %s", MYARGS.CTXID.c_str(), stream_id, error_code, nghttp2_strerror(error_code));
+        session_data->DelStream(stream_id);
+        SPDLOG_DEBUG("{} ServerStream {} closed with error_code={} errstr {}", MYARGS.CTXID.c_str(), stream_id, error_code, nghttp2_strerror(error_code));
         return 0;
     } else {
-        if (session_data->GetParser().GetRequest()->GetStreamId().value_or(-1) == stream_id) {
-            // CDEBUG("%s ClientStream %d closed with error_code=%u errstr %s", MYARGS.CTXID.c_str(), stream_id, error_code, nghttp2_strerror(error_code));
+        ghttp::CStream* stream_data = (ghttp::CStream*)nghttp2_session_get_stream_user_data(session, stream_id);
+        if (stream_data->GetRequest()->GetStreamId().value_or(-1) == stream_id) {
+            // SPDLOG_DEBUG("{} ClientStream {} closed with error_code={} errstr {}", MYARGS.CTXID, stream_id, error_code, nghttp2_strerror(error_code));
             //  auto rv = nghttp2_session_terminate_session(session, NGHTTP2_NO_ERROR);
             //  if (rv != 0) {
             //      return NGHTTP2_ERR_CALLBACK_FAILURE;
             //  }
         }
+        session_data->DelStream(stream_id);
         return 0;
     }
 }
@@ -774,26 +805,29 @@ int CHTTPClient::onHeaderCallback(nghttp2_session* session,
             if (frame->headers.cat != NGHTTP2_HCAT_REQUEST) {
                 break;
             }
-            ghttp::CRequest* stream_data = (ghttp::CRequest*)nghttp2_session_get_stream_user_data(session, frame->hd.stream_id);
+            ghttp::CStream* stream_data = (ghttp::CStream*)nghttp2_session_get_stream_user_data(session, frame->hd.stream_id);
             if (!stream_data) {
                 break;
             }
-            stream_data->AddHeader(std::string((char*)name, namelen), std::string((char*)value, valuelen));
+            stream_data->GetRequest()->AddHeader(std::string((char*)name, namelen), std::string((char*)value, valuelen));
+            SPDLOG_DEBUG("HTTP2 Server HEADER {} {}", name, value);
             if (namelen == sizeof(PATH) - 1 && memcmp(PATH, name, namelen) == 0) {
                 size_t j;
                 for (j = 0; j < valuelen && value[j] != '?'; ++j)
                     ;
-                stream_data->SetPath(std::string((char*)value, j));
+                stream_data->GetRequest()->SetPath(std::string((char*)value, j));
             }
             break;
         }
     } else {
         switch (frame->hd.type) {
         case NGHTTP2_HEADERS:
-            if (frame->headers.cat == NGHTTP2_HCAT_RESPONSE && session_data->GetParser().GetRequest()->GetStreamId().value_or(-1) == frame->hd.stream_id) {
-                session_data->GetParser().GetResponse()->AddHeader(std::string((char*)name, namelen), std::string((char*)value, valuelen));
-                if (session_data->GetParser().GetResponse()->HasHeader(":status"))
-                    session_data->GetParser().GetResponse()->SetStatus((ghttp::HttpStatusCode)CStringTool::ToInteger<int32_t>(session_data->GetParser().GetResponse()->GetHeaderByKey(":status").value()));
+            ghttp::CStream* stream_data = (ghttp::CStream*)nghttp2_session_get_stream_user_data(session, frame->hd.stream_id);
+            if (frame->headers.cat == NGHTTP2_HCAT_RESPONSE && stream_data->GetRequest()->GetStreamId().value_or(-1) == frame->hd.stream_id) {
+                stream_data->GetResponse()->AddHeader(std::string((char*)name, namelen), std::string((char*)value, valuelen));
+                SPDLOG_DEBUG("HTTP2 Client HEADER {} {}", name, value);
+                if (stream_data->GetResponse()->HasHeader(":status"))
+                    stream_data->GetResponse()->SetStatus((ghttp::HttpStatusCode)CStringTool::ToInteger<int32_t>(stream_data->GetResponse()->GetHeaderByKey(":status")));
                 break;
             }
         }
@@ -809,16 +843,15 @@ int CHTTPClient::onBeginHeadersCallback(nghttp2_session* session, const nghttp2_
         if (frame->hd.type != NGHTTP2_HEADERS || frame->headers.cat != NGHTTP2_HCAT_REQUEST) {
             return 0;
         }
-        ghttp::CRequest* stream_data = session_data->GetParser().GetRequest();
-        stream_data->SetStreamId(frame->hd.stream_id);
-        nghttp2_session_set_stream_user_data(session, frame->hd.stream_id, stream_data);
+        nghttp2_session_set_stream_user_data(session, frame->hd.stream_id, session_data->CreateStream(frame->hd.stream_id));
     } else {
         switch (frame->hd.type) {
-        case NGHTTP2_HEADERS:
-            if (frame->headers.cat == NGHTTP2_HCAT_RESPONSE && session_data->GetParser().GetRequest()->GetStreamId().value_or(-1) == frame->hd.stream_id) {
+        case NGHTTP2_HEADERS: {
+            ghttp::CStream* stream_data = (ghttp::CStream*)nghttp2_session_get_stream_user_data(session, frame->hd.stream_id);
+            if (frame->headers.cat == NGHTTP2_HCAT_RESPONSE && stream_data->GetRequest()->GetStreamId().value_or(-1) == frame->hd.stream_id) {
                 return 0;
             }
-            break;
+        } break;
         default:
             break;
         }
@@ -831,9 +864,9 @@ int CHTTPClient::onBeforeFrameSendCallback(nghttp2_session* session, const nghtt
     CHTTPClient* session_data = (CHTTPClient*)user_data;
 
     if (session_data->m_httpserver) {
-        // CDEBUG("%s Server %u", __FUNCTION__, frame->hd.type);
+        SPDLOG_DEBUG("{} Server streamid {} type {}", __FUNCTION__, frame->hd.stream_id, frame->hd.type);
     } else {
-        // CDEBUG("%s Client %u", __FUNCTION__, frame->hd.type);
+        SPDLOG_DEBUG("{} Client {}", __FUNCTION__, frame->hd.type);
     }
     return 0;
 }
@@ -844,9 +877,10 @@ bool CHTTPClient::sendConnectionHeader()
 
     int32_t rv = nghttp2_submit_settings(m_session, NGHTTP2_FLAG_NONE, iv.data(), iv.size());
     if (rv != 0) {
-        CERROR("Fatal error: %s", nghttp2_strerror(rv));
+        SPDLOG_ERROR("Fatal error: {}", nghttp2_strerror(rv));
         return false;
     }
+    SPDLOG_DEBUG("sendConnectionHeader: {}", nghttp2_strerror(rv));
     return true;
 }
 
@@ -854,10 +888,69 @@ bool CHTTPClient::sessionSend()
 {
     int32_t rv = nghttp2_session_send(m_session);
     if (rv != 0) {
-        CERROR("Fatal error: %s", nghttp2_strerror(rv));
+        SPDLOG_ERROR("Fatal error: {}", nghttp2_strerror(rv));
         return false;
     }
+    SPDLOG_DEBUG("sessionSend: {}", nghttp2_strerror(rv));
     return true;
+}
+
+int CHTTPClient::onSendDataCallback(nghttp2_session* session,
+    nghttp2_frame* frame,
+    const uint8_t* framehd, size_t length,
+    nghttp2_data_source* source,
+    void* user_data)
+{
+    std::string_view* data = (std::string_view*)source->ptr;
+
+    CHTTPClient* session_data = (CHTTPClient*)user_data;
+    ghttp::CStream* stream_data = (ghttp::CStream*)nghttp2_session_get_stream_user_data(session, frame->hd.stream_id);
+    if (!session_data->GetConnection()->SendCmd(framehd, 9))
+        return NGHTTP2_ERR_TEMPORAL_CALLBACK_FAILURE;
+    if (data && !session_data->GetConnection()->SendCmd(data->data(), data->length()))
+        return NGHTTP2_ERR_TEMPORAL_CALLBACK_FAILURE;
+
+    delete data;
+    stream_data->GetRequest()->Reset();
+
+    return 0;
+}
+
+static ssize_t nocopy_read_callback(nghttp2_session* session,
+    int32_t stream_id,
+    uint8_t* buf, size_t length,
+    uint32_t* data_flags,
+    nghttp2_data_source* source,
+    void* user_data)
+{
+    (void)session;
+    (void)stream_id;
+    (void)user_data;
+    std::string_view* data = (std::string_view*)source->ptr;
+    ssize_t r = data->length();
+
+    CHTTPClient* session_data = (CHTTPClient*)user_data;
+    ghttp::CStream* stream_data = (ghttp::CStream*)nghttp2_session_get_stream_user_data(session, stream_id);
+    SPDLOG_DEBUG("nocopy_read_callback: {}", fmt::ptr(stream_data));
+
+    *data_flags |= NGHTTP2_DATA_FLAG_EOF;
+    *data_flags |= NGHTTP2_DATA_FLAG_NO_COPY;
+
+    if (stream_data->GetRequest()->IsGRPC()) {
+        *data_flags |= NGHTTP2_DATA_FLAG_NO_END_STREAM;
+        static const std::string GRPC_STATUS = "grpc-status";
+        std::vector<nghttp2_nv> hdrs;
+        std::string grpc_status_value = std::to_string(0);
+        hdrs.push_back({ (uint8_t*)GRPC_STATUS.c_str(), (uint8_t*)grpc_status_value.c_str(), GRPC_STATUS.size(), grpc_status_value.size(), NGHTTP2_NV_FLAG_NONE });
+        auto rv = nghttp2_submit_trailer(session, stream_id, &hdrs[0], hdrs.size());
+        if (rv != 0) {
+            SPDLOG_ERROR("Fatal error: {}", nghttp2_strerror(rv));
+            stream_data->GetRequest()->Reset();
+            return NGHTTP2_ERR_TEMPORAL_CALLBACK_FAILURE;
+        }
+    }
+
+    return r;
 }
 
 static ssize_t file_read_callback(nghttp2_session* session, int32_t stream_id,
@@ -872,53 +965,51 @@ static ssize_t file_read_callback(nghttp2_session* session, int32_t stream_id,
     (void)stream_id;
     (void)user_data;
 
+    ghttp::CStream* stream_data = (ghttp::CStream*)nghttp2_session_get_stream_user_data(session, stream_id);
+
     while ((r = read(fd, buf, length)) == -1 && errno == EINTR)
         ;
     if (r == -1) {
+        stream_data->GetRequest()->Reset();
         return NGHTTP2_ERR_TEMPORAL_CALLBACK_FAILURE;
     }
     if (r == 0) {
         *data_flags |= NGHTTP2_DATA_FLAG_EOF;
     }
+
+    stream_data->GetRequest()->Reset();
+
     return r;
 }
-bool CHTTPClient::SendResponse(ghttp::CRequest* stream_data,
-    const ghttp::HttpStatusCode status, std::unordered_map<std::string, std::string> header, std::optional<std::string_view> data)
+
+bool CHTTPClient::H2Response(ghttp::CRequest* stream_data,
+    const ghttp::HttpStatusCode status, std::unordered_map<std::string, std::string> header, std::optional<std::string_view> body)
 {
-    static const std::string STATUSH = ":status";
-    int pipefd[2];
-    auto rv = pipe(pipefd);
-    if (rv != 0) {
-        rv = nghttp2_submit_rst_stream(m_session, NGHTTP2_FLAG_NONE,
-            stream_data->GetStreamId().value(),
-            NGHTTP2_INTERNAL_ERROR);
-        if (rv != 0) {
-            return false;
-        }
-        return true;
+    static const std::string STATUS = ":status";
+    if (stream_data->IsGRPC()) {
+        header["grpc-accept-encoding"] = "identity";
+        CEncoder<GRPCMessageHeader> enc;
+        if (body)
+            body = enc.Encode(0, body.value().data(), body.value().length());
     }
 
-    size_t writelen = write(pipefd[1], data.value_or("").data(), data.value_or("").length());
-    close(pipefd[1]);
-
-    if (writelen != data.value_or("").length()) {
-        close(pipefd[0]);
-        return false;
-    }
-    stream_data->SetFd(pipefd[0]);
     nghttp2_data_provider data_prd;
-    data_prd.source.fd = stream_data->GetFd().value();
-    data_prd.read_callback = file_read_callback;
+    data_prd.source.ptr = body ? CNEW std::string_view(body.value()) : nullptr;
+    data_prd.read_callback = nocopy_read_callback;
 
+    header["date"] = ghttp::GetHttpDate();
+    header["server"] = ghttp::GetHttpServer();
+    header["content-type"] = stream_data->GetHeaderByKey("content-type").empty() ? "application/json; charset=utf-8" : stream_data->GetHeaderByKey("content-type");
     std::vector<nghttp2_nv> hdrs;
     std::string status_value = std::to_string((long)status);
-    hdrs.push_back({ (uint8_t*)STATUSH.c_str(), (uint8_t*)status_value.c_str(), STATUSH.size(), status_value.size(), NGHTTP2_NV_FLAG_NONE });
+    hdrs.push_back({ (uint8_t*)STATUS.c_str(), (uint8_t*)status_value.c_str(), STATUS.size(), status_value.size(), NGHTTP2_NV_FLAG_NONE });
     for (auto& [k, v] : header) {
         hdrs.push_back({ (uint8_t*)k.c_str(), (uint8_t*)v.c_str(), k.size(), v.size(), NGHTTP2_NV_FLAG_NONE });
     }
-    rv = nghttp2_submit_response(m_session, stream_data->GetStreamId().value(), hdrs.data(), hdrs.size(), &data_prd);
+    auto rv = nghttp2_submit_response(m_session, stream_data->GetStreamId().value(), hdrs.data(), hdrs.size(), body ? &data_prd : nullptr);
     if (rv != 0) {
-        CERROR("Fatal error: %s", nghttp2_strerror(rv));
+        SPDLOG_ERROR("Fatal error: {}", nghttp2_strerror(rv));
+        stream_data->Reset();
         return false;
     }
     return true;
@@ -930,9 +1021,11 @@ bool CHTTPClient::sendFile(ghttp::CRequest* stream_data,
     static const std::string STATUSH = ":status";
     stream_data->SetFd(fd);
     nghttp2_data_provider data_prd;
-    data_prd.source.fd = stream_data->GetFd().value();
+    data_prd.source.fd = stream_data->GetFd().value_or(-1);
     data_prd.read_callback = file_read_callback;
 
+    header["date"] = ghttp::GetHttpDate();
+    header["server"] = ghttp::GetHttpServer();
     std::vector<nghttp2_nv> hdrs;
     std::string status_value = std::to_string((long)status);
     hdrs.push_back({ (uint8_t*)STATUSH.c_str(), (uint8_t*)status_value.c_str(), STATUSH.size(), status_value.size(), NGHTTP2_NV_FLAG_NONE });
@@ -941,33 +1034,68 @@ bool CHTTPClient::sendFile(ghttp::CRequest* stream_data,
     }
     auto rv = nghttp2_submit_response(m_session, stream_data->GetStreamId().value(), hdrs.data(), hdrs.size(), &data_prd);
     if (rv != 0) {
-        CERROR("Fatal error: %s", nghttp2_strerror(rv));
+        SPDLOG_ERROR("Fatal error: {}", nghttp2_strerror(rv));
         return false;
     }
     return true;
 }
 
-bool CHTTPClient::submitRequest()
+bool CHTTPClient::submitRequest(ghttp::CStream* stream)
 {
-    auto&& headers = getHttp2Header();
+    std::map<std::string, std::string> header = {};
+    header[":method"] = ghttp::HttpMethodStr(stream->GetRequest()->GetMethod()).value_or("");
+    header[":scheme"] = stream->GetRequest()->GetScheme();
+    header[":authority"] = fmt::format("{}:{}", stream->GetRequest()->GetHost(), stream->GetRequest()->GetPort());
+    header[":path"] = stream->GetRequest()->GetPath();
+    stream->GetRequest()->GetAllHeaders(header);
+
     std::vector<nghttp2_nv> hdrs;
-    for (auto& [k, v] : headers) {
+    for (auto& [k, v] : header) {
         hdrs.push_back({ (uint8_t*)k.c_str(), (uint8_t*)v.c_str(), k.size(), v.size(), NGHTTP2_NV_FLAG_NONE });
-        CDEBUG("HEADERS: %s %s", k.c_str(), v.c_str());
+        SPDLOG_DEBUG("HEADERS: {} {}", k, v);
     }
 
+    std::string_view body = stream->GetRequest()->GetBody();
     nghttp2_data_provider pro;
-    std::string* data = CNEW std::string("JIMMY");
-    pro.source.ptr = data;
-    pro.read_callback = onDataSourceReadCallback;
-    auto stream_id = nghttp2_submit_request(m_session, NULL, hdrs.data(), hdrs.size(), &pro, this);
+    pro.read_callback = nocopy_read_callback;
+    pro.source.ptr = body.empty() ? nullptr : CNEW std::string_view(body);
+    auto stream_id = nghttp2_submit_request(m_session, nullptr, hdrs.data(), hdrs.size(), body.empty() ? nullptr : &pro, this);
     if (stream_id < 0) {
-        CERROR("Could not submit HTTP request: %s", nghttp2_strerror(stream_id));
+        SPDLOG_ERROR("Could not submit HTTP request: {}", nghttp2_strerror(stream_id));
         return false;
     }
-    GetParser().GetRequest()->SetStreamId(stream_id);
-    CDEBUG("%s,%d", __FUNCTION__, stream_id);
+    nghttp2_session_set_stream_user_data(GetNGHttp2Session(), stream_id, CreateStream(stream_id));
+
+    SPDLOG_DEBUG("{},{}", __FUNCTION__, stream_id);
     return sessionSend();
+}
+
+ghttp::CStream* CHTTPClient::CreateStream(const int32_t streamid)
+{
+    m_streams[streamid].reset(CNEW ghttp::CStream(streamid, this));
+    return m_streams[streamid].get();
+}
+
+bool CHTTPClient::DelStream(const int32_t streamid)
+{
+    auto stream = GetStream(streamid);
+    if (stream && stream.value()->GetRequest()->GetFd()) {
+        close(stream.value()->GetRequest()->GetFd().value());
+    }
+
+    m_streams.erase(streamid);
+    return true;
+}
+
+std::optional<ghttp::CStream*> CHTTPClient::GetStream(const int32_t streamid)
+{
+    if (IsHttp2()) {
+        if (auto it = m_streams.find(streamid); it != std::end(m_streams))
+            return it->second.get();
+    } else {
+        return m_base_stream.get();
+    }
+    return std::nullopt;
 }
 
 bool CHTTPClient::InitNghttp2SessionData()
@@ -981,6 +1109,7 @@ bool CHTTPClient::InitNghttp2SessionData()
     nghttp2_session_callbacks_set_on_begin_headers_callback(callbacks, onBeginHeadersCallback);
     nghttp2_session_callbacks_set_on_data_chunk_recv_callback(callbacks, onDataChunkRecvCallback);
     nghttp2_session_callbacks_set_before_frame_send_callback(callbacks, onBeforeFrameSendCallback);
+    nghttp2_session_callbacks_set_send_data_callback(callbacks, onSendDataCallback);
 
     if (m_evcon->IsPassive())
         nghttp2_session_server_new(&m_session, callbacks, this);
@@ -994,10 +1123,7 @@ bool CHTTPClient::InitNghttp2SessionData()
     if (!sessionSend())
         return false;
 
-    struct timeval rwtv = { MYARGS.HttpTimeout.value_or(60), 0 };
-    bufferevent_set_timeouts(GetConnection()->GetBufEvent(), &rwtv, &rwtv);
-    GetParser().SetNgHttp2Session(GetNGHttp2Session());
-
+    SPDLOG_DEBUG("{}", __FUNCTION__);
     return true;
 }
 

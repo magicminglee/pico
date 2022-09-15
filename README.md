@@ -5,6 +5,9 @@
 ```shell
 cd external
 sh install.sh
+
+cd ../proto
+sh gen.sh
 ```
 
 ## Build

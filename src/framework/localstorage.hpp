@@ -2,14 +2,14 @@
 #include "singleton.hpp"
 
 NAMESPACE_FRAMEWORK_BEGIN
-template <class T>
-class CLocalStoreage : public CTLSingleton<CLocalStoreage<T>> {
+template <class T = int64_t>
+class CLocalStorage : public CTLSingleton<CLocalStorage<T>> {
     using VMAP = std::unordered_map<T, std::string>;
     using KVMAP = std::unordered_map<std::string, VMAP>;
 
 public:
-    CLocalStoreage() = default;
-    ~CLocalStoreage() = default;
+    CLocalStorage() = default;
+    ~CLocalStorage() = default;
     void Set(const std::string& key, const T& field, const std::string& val)
     {
         m_tls_map[key][field] = val;
@@ -36,6 +36,23 @@ public:
                     m_tls_map.erase(it);
             }
         }
+    }
+
+    void RemoveAll(const std::string& key)
+    {
+        if (auto it = m_tls_map.find(key); it != std::end(m_tls_map)) {
+            m_tls_map.erase(it);
+        }
+    }
+    bool Foreach(const std::string& key, std::function<bool(const T&, const std::string&)> cb)
+    {
+        if (auto it = m_tls_map.find(key); it != std::end(m_tls_map) && cb) {
+            for (auto& [k, v] : it->second) {
+                if (!cb(k, v))
+                    return false;
+            }
+        }
+        return true;
     }
 
 private:

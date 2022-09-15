@@ -2,6 +2,8 @@
 #include "common.hpp"
 #include "object.hpp"
 
+#include <regex>
+
 NAMESPACE_FRAMEWORK_BEGIN
 
 #ifndef CheckCondition
@@ -35,6 +37,17 @@ static const uint32_t BACKLOG_SIZE = 512;
 
 class CUtils {
 public:
+    enum class OPENSSL_ALGO : std::uint16_t {
+        OPENSSL_ALGO_SHA1 = 1,
+        OPENSSL_ALGO_MD5,
+        OPENSSL_ALGO_MD4,
+        OPENSSL_ALGO_SHA224,
+        OPENSSL_ALGO_SHA256,
+        OPENSSL_ALGO_SHA384,
+        OPENSSL_ALGO_SHA512,
+        OPENSSL_ALGO_RMD160
+    };
+
     static constexpr auto HashServerId(const uint16_t stype, const uint16_t sid)
     {
         return (stype << 16) | sid;
@@ -113,6 +126,9 @@ public:
     static std::string Sha256Raw(const std::string& in);
     static std::string HmacSha256(const std::string& in, const std::string& key);
     static std::string Md5(const std::string& in);
+    static bool RSAVerify(const OPENSSL_ALGO algo, const std::string& key, const std::string& digest, const std::string& sig);
+    static auto ParseDBURL(const std::string& url) -> std::tuple<std::string, std::string, std::string, std::string, std::string, std::string>;
+    static std::optional<std::string_view> GetEnv(const std::string& name);
 
     class BitSet {
     public:

@@ -75,7 +75,16 @@ struct XGAMEHAProxyHeader {
         } v2;
     } hahdr;
 };
+
+struct GRPCMessageHeader {
+    unsigned char flags;
+    unsigned int datalen;
+    char data[0];
+    ALL_SIZE_FUNC(datalen, data);
+    DATA_SIZE_FUNC(datalen, data);
+};
 #pragma pack()
 
 static const unsigned int XGAME_PACKET_HEADER_LENGTH = sizeof(XGAMEExternalHeader);
 static const unsigned int XGAME_INTERPACKET_HEADER_LENGTH = sizeof(XGAMEInternalHeader);
+static const unsigned int GRPC_MESSAGE_HEADER_LENGTH = sizeof(GRPCMessageHeader);

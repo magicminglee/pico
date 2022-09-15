@@ -3,28 +3,15 @@
 #include "jwt-cpp/jwt.h"
 #include "jwt-cpp/traits/nlohmann-json/traits.h"
 
+#include "google/protobuf/message.h"
+#include "proto/helloworld.pb.h"
+
 USE_NAMESPACE_FRAMEWORK
 
 int main(int argc, char** argv)
 {
     CheckCondition(CApp::Start(argc, argv), EXIT_FAILURE);
     return EXIT_SUCCESS;
-}
-
-void CApp::TcpRegister(CWorker* w, const std::string host, std::shared_ptr<CTCPServer> srv)
-{
-    srv->ListenAndServe(host, [host](const int32_t fd) {
-        CConnectionHandler* h = CNEW CConnectionHandler();
-        h->Register(
-            [](std::string_view data) {
-                return 0;
-            },
-            []() {
-            },
-            [](const EnumConnEventType e) {
-            });
-        h->Init(fd, host);
-    });
 }
 
 std::optional<int64_t> getNextSequenceId(const std::string& name)
@@ -46,34 +33,73 @@ std::optional<int64_t> getNextSequenceId(const std::string& name)
             }
         }
     } catch (const std::exception& e) {
-        CERROR("CTX:%s /game/v1/login mongo exception %s", MYARGS.CTXID.c_str(), e.what());
+        SPDLOG_ERROR("CTX:{} /game/v1/login mongo exception {}", MYARGS.CTXID.c_str(), e.what());
     }
 
     return std::nullopt;
 }
 
-void CApp::WebRegister(CWorker* w, std::shared_ptr<CHTTPServer> srv)
+bool updateGoogleOrder(const int64_t uid, const std::string& oid)
+{
+    auto conn = CMongo::Instance().Conn();
+    mongocxx::v_noabi::collection col = (*conn)[MYARGS.DbName[0]][MYARGS.DbColl[0][2]];
+    mongocxx::options::find_one_and_update opts;
+    opts.upsert(true);
+    auto query = make_document(kvp("_id", bsoncxx::types::b_utf8 { oid }));
+    auto update = make_document(kvp("$setOnInsert",
+        make_document(
+            kvp("uid", bsoncxx::types::b_int64 { uid }),
+            kvp("creattime", bsoncxx::types::b_date { std::chrono::milliseconds { CChrono::NowMs() } }))));
+
+    auto result = col.find_one_and_update(query.view(), update.view(), opts);
+    return result ? true : false;
+}
+
+bool updateIOSOrder(const int64_t uid, const std::string& oid)
+{
+    auto conn = CMongo::Instance().Conn();
+    mongocxx::v_noabi::collection col = (*conn)[MYARGS.DbName[0]][MYARGS.DbColl[0][3]];
+    mongocxx::options::find_one_and_update opts;
+    opts.upsert(true);
+    auto query = make_document(kvp("_id", bsoncxx::types::b_utf8 { oid }));
+    auto update = make_document(kvp("$setOnInsert",
+        make_document(
+            kvp("uid", bsoncxx::types::b_int64 { uid }),
+            kvp("creattime", bsoncxx::types::b_date { std::chrono::milliseconds { CChrono::NowMs() } }))));
+
+    auto result = col.find_one_and_update(query.view(), update.view(), opts);
+    return result ? true : false;
+}
+
+void CApp::WebRegister(CHTTPServer* srv)
 {
     srv->RegEvent("finish",
         [](ghttp::CRequest* req, ghttp::CResponse* rsp) -> std::optional<std::pair<ghttp::HttpStatusCode, std::string>> {
             auto status = rsp->GetStatus().value_or(ghttp::HttpStatusCode::OK);
-            auto body = std::string(rsp->GetBody().value_or("").data(), rsp->GetBody().value_or("").length());
-            CDEBUG("CTX:%s Http Response status %s body %s", MYARGS.CTXID.c_str(), ghttp::HttpReason(status).value_or(""), body.c_str());
+            SPDLOG_INFO("CTX: {} Response user {} status {} body {}",
+                MYARGS.CTXID,
+                req->GetUid().value_or(0),
+                (int32_t)status,
+                rsp->GetBody().value_or(""));
             return std::nullopt;
         });
     srv->RegEvent("start",
         [](ghttp::CRequest* req, ghttp::CResponse* rsp) -> std::optional<std::pair<ghttp::HttpStatusCode, std::string>> {
-            if (req->GetPath().value_or("") == "/game/v1/login") {
-                auto path = std::string(req->GetPath().value_or("").data(), req->GetPath().value_or("").length());
-                auto body = std::string(req->GetBody().value_or("").data(), req->GetBody().value_or("").length());
-                CDEBUG("CTX:%s Http Request api %s body %s", MYARGS.CTXID.c_str(), path.c_str(), body.c_str());
+            if (req->GetPath() == "/game/v1/login"
+                || req->GetPath() == "/game/debug/echo"
+                || req->GetPath() == "/game/debug/ws") {
+                SPDLOG_INFO("CTX:{} user Request api {} body {} from ip {}",
+                    MYARGS.CTXID,
+                    req->GetPath(),
+                    req->GetBody(),
+                    req->Conn()->GetConnection()->GetPeerIp());
                 return std::nullopt;
             }
             auto auth = req->GetHeaderByKey("authorization");
-            if (!auth)
+            if (auth.empty())
                 return std::optional<std::pair<ghttp::HttpStatusCode, std::string>>({ ghttp::HttpStatusCode::UNAUTHORIZED, "" });
             try {
-                auto res = CStringTool::Split(auth.value(), " ");
+                auto res = CStringTool::Split(auth, " ");
                 if (2 == res.size()) {
                     const auto decoded = jwt::decode<jwt::traits::nlohmann_json>(res[1].data());
                     auto verifier = jwt::verify<jwt::traits::nlohmann_json>()
@@ -86,13 +112,16 @@ void CApp::WebRegister(CWorker* w, std::shared_ptr<CHTTPServer> srv)
                     }
                     if (!req->GetUid())
                         return std::optional<std::pair<ghttp::HttpStatusCode, std::string>>({ ghttp::HttpStatusCode::UNAUTHORIZED, "No UserId" });
-                    auto path = std::string(req->GetPath().value_or("").data(), req->GetPath().value_or("").length());
-                    auto body = std::string(req->GetBody().value_or("").data(), req->GetBody().value_or("").length());
-                    CDEBUG("CTX:%s Http Request api %s body %s", MYARGS.CTXID.c_str(), path.c_str(), body.c_str());
+                    SPDLOG_DEBUG("CTX:{} user {} Request api {} body {} from ip {}",
+                        MYARGS.CTXID,
+                        req->GetUid().value_or(0),
+                        req->GetPath(),
+                        req->GetBody(),
+                        req->Conn()->GetConnection()->GetPeerIp());
                     return std::nullopt;
                 }
             } catch (const std::exception& e) {
-                CERROR("CTX:%s jwt verify exception %s", MYARGS.CTXID.c_str(), e.what());
+                SPDLOG_ERROR("CTX:{} jwt verify exception {}", MYARGS.CTXID, e.what());
             }
             return std::optional<std::pair<ghttp::HttpStatusCode, std::string>>({ ghttp::HttpStatusCode::UNAUTHORIZED, "" });
         });
@@ -100,10 +129,10 @@ void CApp::WebRegister(CWorker* w, std::shared_ptr<CHTTPServer> srv)
         "/game/v1/login",
         ghttp::HttpMethod::POST,
         [](ghttp::CRequest* req, ghttp::CResponse* rsp) {
-            if (!req->GetBody())
+            if (req->GetBody().empty())
                 return rsp->Response({ ghttp::HttpStatusCode::BADREQUEST, "Invalid Parameters" });
             try {
-                auto j = nlohmann::json::parse(req->GetBody().value());
+                auto j = nlohmann::json::parse(req->GetBody());
 
                 auto conn = CMongo::Instance().Conn();
                 mongocxx::v_noabi::collection col = (*conn)[MYARGS.DbName[0]][MYARGS.DbColl[0][0]];
@@ -119,7 +148,7 @@ void CApp::WebRegister(CWorker* w, std::shared_ptr<CHTTPServer> srv)
                 try {
                     result = col.find_one_and_update(query.view(), update.view(), option);
                 } catch (const std::exception& e) {
-                    CERROR("CTX:%s /game/v1/login mongo exception %s", MYARGS.CTXID.c_str(), e.what());
+                    SPDLOG_ERROR("CTX:{} /game/v1/login mongo exception {}", MYARGS.CTXID, e.what());
                     return rsp->Response({ ghttp::HttpStatusCode::INTERNAL, "Database Exception" });
                 }
 
@@ -152,7 +181,7 @@ void CApp::WebRegister(CWorker* w, std::shared_ptr<CHTTPServer> srv)
                                     }
                                 }
                             } catch (const std::exception& e) {
-                                CERROR("CTX:%s /game/v1/login mongo exception %s", MYARGS.CTXID.c_str(), e.what());
+                                SPDLOG_ERROR("CTX:{} /game/v1/login mongo exception {}", MYARGS.CTXID, e.what());
                                 return rsp->Response({ ghttp::HttpStatusCode::INTERNAL, "Database Exception" });
                             }
                         }
@@ -173,7 +202,7 @@ void CApp::WebRegister(CWorker* w, std::shared_ptr<CHTTPServer> srv)
                     return rsp->Response({ ghttp::HttpStatusCode::OK, js.dump() });
                 }
             } catch (const std::exception& e) {
-                CERROR("CTX:%s /game/v1/login exception %s", MYARGS.CTXID.c_str(), e.what());
+                SPDLOG_ERROR("CTX:{} /game/v1/login exception {}", MYARGS.CTXID, e.what());
                 return rsp->Response({ ghttp::HttpStatusCode::INTERNAL, "Database Exception" });
             }
             return rsp->Response({ ghttp::HttpStatusCode::BADREQUEST, "Invalid Parameters" });
@@ -182,7 +211,7 @@ void CApp::WebRegister(CWorker* w, std::shared_ptr<CHTTPServer> srv)
         "/game/v1/getuser",
         ghttp::HttpMethod::POST,
         [](ghttp::CRequest* req, ghttp::CResponse* rsp) {
-            auto v = CLocalStoreage<int64_t>::Instance().Get("user", req->GetUid().value());
+            auto v = CLocalStorage<int64_t>::Instance().Get("user", req->GetUid().value());
             if (v) {
                 return rsp->Response({ ghttp::HttpStatusCode::OK, v.value()->data() });
             }
@@ -199,10 +228,10 @@ void CApp::WebRegister(CWorker* w, std::shared_ptr<CHTTPServer> srv)
                         j["value"] = it->get_utf8();
                     }
                 }
-                CLocalStoreage<int64_t>::Instance().Set("user", req->GetUid().value(), j.dump());
+                CLocalStorage<int64_t>::Instance().Set("user", req->GetUid().value(), j.dump());
                 return rsp->Response({ ghttp::HttpStatusCode::OK, j.dump() });
             } catch (const std::exception& e) {
-                CERROR("CTX:%s /game/v1/getuser mongo exception %s", MYARGS.CTXID.c_str(), e.what());
+                SPDLOG_ERROR("CTX:{} /game/v1/getuser mongo exception {}", MYARGS.CTXID, e.what());
                 return rsp->Response({ ghttp::HttpStatusCode::INTERNAL, "Database Exception" });
             }
             return true;
@@ -210,11 +239,11 @@ void CApp::WebRegister(CWorker* w, std::shared_ptr<CHTTPServer> srv)
     srv->Register(
         "/game/v1/setuser",
         ghttp::HttpMethod::POST,
-        [w](ghttp::CRequest* req, ghttp::CResponse* rsp) {
-            if (!req->GetBody())
+        [](ghttp::CRequest* req, ghttp::CResponse* rsp) {
+            if (req->GetBody().empty())
                 return rsp->Response({ ghttp::HttpStatusCode::BADREQUEST, "Invalid Parameters" });
             try {
-                auto j = nlohmann::json::parse(req->GetBody().value());
+                auto j = nlohmann::json::parse(req->GetBody());
                 auto conn = CMongo::Instance().Conn();
                 mongocxx::v_noabi::collection col = (*conn)[MYARGS.DbName[0]][MYARGS.DbColl[0][0]];
                 auto query = make_document(kvp("_id", bsoncxx::types::b_int64 { req->GetUid().value() }));
@@ -222,67 +251,368 @@ void CApp::WebRegister(CWorker* w, std::shared_ptr<CHTTPServer> srv)
 
                 col.update_one(query.view(), update.view());
             } catch (const std::exception& e) {
-                CERROR("CTX:%s /game/v1/setuser mongo exception %s", MYARGS.CTXID.c_str(), e.what());
-                return rsp->Response({ ghttp::HttpStatusCode::INTERNAL, "Database Exception" });
+                SPDLOG_ERROR("CTX:{} /game/v1/setuser exception {}", MYARGS.CTXID, e.what());
+                return rsp->Response({ ghttp::HttpStatusCode::INTERNAL, e.what() });
             }
 
             // CRedisMgr::Instance().Handle(0)->del(std::to_string(req->GetUid().value()));
             nlohmann::json j;
             j["cmd"] = "UpdateUser";
             j["uid"] = req->GetUid().value();
-            w->SendMsgToMain(CChannel::MsgType::Json, j.dump());
+            CWorker::LOCAL_WORKER->SendMsgToMain(CChannel::MsgType::Json, j.dump());
             nlohmann::json js;
+            return rsp->Response({ ghttp::HttpStatusCode::OK, js.dump() });
+        });
+    srv->Register(
+        "/game/v1/google_purchase",
+        ghttp::HttpMethod::POST,
+        [](ghttp::CRequest* req, ghttp::CResponse* rsp) {
+            if (req->GetBody().empty())
+                return rsp->Response({ ghttp::HttpStatusCode::BADREQUEST, "Invalid Parameters" });
+            try {
+                auto j = nlohmann::json::parse(req->GetBody());
+                std::string key = "-----BEGIN PUBLIC KEY-----\n" + MYARGS.ConfMap["gopubkey"] + "\n-----END PUBLIC KEY-----";
+                std::string origin = j["receipt-data"].get<std::string>();
+                if (CUtils::RSAVerify(CUtils::OPENSSL_ALGO::OPENSSL_ALGO_SHA1, key, origin, CUtils::Base64Decode(j["signature"].get<std::string>()))) {
+                    auto oj = nlohmann::json::parse(origin);
+                    updateGoogleOrder(req->GetUid().value(), oj["purchaseToken"].get<std::string>());
+                    nlohmann::json js;
+                    js["status"] = "ok";
+                    js["productid"] = oj["productId"].get<std::string>();
+                    js["quantity"] = oj["quantity"].get<int32_t>();
+                    nlohmann::json ejs;
+                    ejs["uid"] = req->GetUid().value();
+                    ejs["paytype"] = 1;
+                    ejs["orderid"] = oj["orderId"].get<std::string>();
+                    ejs["productid"] = oj["productId"].get<std::string>();
+                    ejs["quantity"] = oj["quantity"].get<int32_t>();
+                    ejs["balance"] = 0;
+                    ejs["ip"] = req->Conn()->GetConnection()->GetPeerIp();
+                    CClickHouseMgr::Instance().Push("payevent", ejs.dump());
+
+                    return rsp->Response({ ghttp::HttpStatusCode::OK, js.dump() });
+                } else {
+                    nlohmann::json js;
+                    js["status"] = "failed";
+                    js["msg"] = "failed to verify";
+                    return rsp->Response({ ghttp::HttpStatusCode::OK, js.dump() });
+                }
+            } catch (const std::exception& e) {
+                SPDLOG_ERROR("CTX:{} /game/v1/google_purchase exception {}", MYARGS.CTXID, e.what());
+                return rsp->Response({ ghttp::HttpStatusCode::INTERNAL, e.what() });
+            }
+        });
+    srv->Register(
+        "/game/v1/ios_purchase",
+        ghttp::HttpMethod::POST,
+        [](ghttp::CRequest* req, ghttp::CResponse* rsp) {
+            if (req->GetBody().empty())
+                return rsp->Response({ ghttp::HttpStatusCode::BADREQUEST, "Invalid Parameters" });
+            try {
+                auto j0 = nlohmann::json::parse(req->GetBody());
+                std::string productid = j0["productid"].get<std::string>();
+                auto j = nlohmann::json::parse(j0["receipt-data"].get<std::string>());
+                nlohmann::json reqbody;
+                reqbody["receipt-data"] = j["Payload"].get<std::string>();
+                // CINFO("http %s response body", response->GetBody().value().data());
+                reqbody["password"] = MYARGS.ConfMap["iossharedkey"];
+                ghttp::CResponse* r = rsp->Clone();
+                std::string body = reqbody.dump();
+                const int64_t uid = req->GetUid().value();
+                std::string ip = req->Conn()->GetConnection()->GetPeerIp();
+                CHTTPClient::Emit(
+                    MYARGS.ConfMap["iosprourl"],
+                    [r, body, uid, ip, productid](ghttp::CResponse* response) {
+                        if (response->GetBody()) {
+                            try {
+                                auto j = nlohmann::json::parse(response->GetBody().value());
+                                if (21007 == j["status"].get<int32_t>()) {
+                                    CHTTPClient::Emit(
+                                        MYARGS.ConfMap["iossanboxurl"],
+                                        [r, uid, ip, productid](ghttp::CResponse* response) {
+                                            if (response->GetBody()) {
+                                                try {
+                                                    auto j = nlohmann::json::parse(response->GetBody().value());
+                                                    if (0 == j["status"]) {
+                                                        nlohmann::json js;
+                                                        js["status"] = "ok";
+                                                        js["productid"] = productid;
+                                                        auto a = nlohmann::json::array();
+                                                        for (auto it = j["receipt"]["in_app"].begin(); it != j["receipt"]["in_app"].end(); ++it) {
+                                                            nlohmann::json vv;
+                                                            vv["productid"] = (*it)["product_id"].get<std::string>();
+                                                            vv["quantity"] = CStringTool::ToInteger<int32_t>((*it)["quantity"].get<std::string>());
+                                                            a.push_back(vv);
+                                                            if (!productid.empty() && productid == (*it)["product_id"].get<std::string>()) {
+                                                                updateIOSOrder(uid, (*it)["transaction_id"].get<std::string>());
+                                                                nlohmann::json ejs;
+                                                                ejs["uid"] = uid;
+                                                                ejs["paytype"] = 2;
+                                                                ejs["orderid"] = (*it)["transaction_id"].get<std::string>();
+                                                                ejs["productid"] = (*it)["product_id"].get<std::string>();
+                                                                ejs["quantity"] = CStringTool::ToInteger<int32_t>((*it)["quantity"].get<std::string>());
+                                                                ejs["balance"] = 0;
+                                                                ejs["ip"] = ip;
+                                                                CClickHouseMgr::Instance().Push("payevent", ejs.dump());
+                                                            }
+                                                        }
+                                                        js["inapp"] = a;
+                                                        r->Response({ ghttp::HttpStatusCode::OK, js.dump() });
+                                                    }
+                                                } catch (const std::exception& e) {
+                                                    SPDLOG_ERROR("CTX:{} /game/v1/ios_purchase exception {}", MYARGS.CTXID, e.what());
+                                                    r->Response({ ghttp::HttpStatusCode::INTERNAL, e.what() });
+                                                }
+                                            }
+                                            delete r;
+                                            return true;
+                                        },
+                                        ghttp::HttpMethod::POST, body);
+                                    return true;
+                                } else if (0 == j["status"].get<int32_t>()) {
+                                    if (0 == j["status"]) {
+                                        nlohmann::json js;
+                                        js["status"] = "ok";
+                                        js["productid"] = productid;
+                                        auto a = nlohmann::json::array();
+                                        for (auto it = j["receipt"]["in_app"].begin(); it != j["receipt"]["in_app"].end(); ++it) {
+                                            nlohmann::json vv;
+                                            vv["productid"] = (*it)["product_id"].get<std::string>();
+                                            vv["quantity"] = CStringTool::ToInteger<int32_t>((*it)["quantity"].get<std::string>());
+                                            a.push_back(vv);
+                                            if (!productid.empty() && productid == (*it)["product_id"].get<std::string>()) {
+                                                updateIOSOrder(uid, (*it)["transaction_id"].get<std::string>());
+                                                nlohmann::json ejs;
+                                                ejs["uid"] = uid;
+                                                ejs["paytype"] = 2;
+                                                ejs["orderid"] = (*it)["transaction_id"].get<std::string>();
+                                                ejs["productid"] = (*it)["product_id"].get<std::string>();
+                                                ejs["quantity"] = CStringTool::ToInteger<int32_t>((*it)["quantity"].get<std::string>());
+                                                ejs["balance"] = 0;
+                                                ejs["ip"] = ip;
+                                                CClickHouseMgr::Instance().Push("payevent", ejs.dump());
+                                            }
+                                        }
+                                        js["inapp"] = a;
+                                        r->Response({ ghttp::HttpStatusCode::OK, js.dump() });
+                                    }
+                                    delete r;
+                                }
+                            } catch (const std::exception& e) {
+                                SPDLOG_ERROR("CTX:{} /game/v1/ios_purchase exception {}", MYARGS.CTXID, e.what());
+                                r->Response({ ghttp::HttpStatusCode::INTERNAL, e.what() });
+                                delete r;
+                                return true;
+                            }
+                        }
+                        return true;
+                    },
+                    ghttp::HttpMethod::POST,
+                    body);
+                return false;
+            } catch (const std::exception& e) {
+                SPDLOG_ERROR("CTX:{} /game/v1/ios_purchase exception {}", MYARGS.CTXID, e.what());
+                return rsp->Response({ ghttp::HttpStatusCode::INTERNAL, e.what() });
+            }
+        });
+    srv->Register(
+        "/game/v1/logevent",
+        ghttp::HttpMethod::POST,
+        [](ghttp::CRequest* req, ghttp::CResponse* rsp) {
+            if (req->GetBody().empty())
+                return rsp->Response({ ghttp::HttpStatusCode::BADREQUEST, "Invalid Parameters" });
+            try {
+                auto j = nlohmann::json::parse(req->GetBody());
+                const auto& name = j["name"].get<std::string>();
+                const auto& parm = j["parm"].get<std::string>();
+                CClickHouseMgr::Instance().Push(name, parm);
+            } catch (const std::exception& e) {
+                SPDLOG_ERROR("CTX:{} /game/v1/logevent exception {}", MYARGS.CTXID, e.what());
+                return rsp->Response({ ghttp::HttpStatusCode::INTERNAL, e.what() });
+            }
+
+            nlohmann::json js;
+            return rsp->Response({ ghttp::HttpStatusCode::OK, js.dump() });
+        });
+    srv->Register(
+        "/game/v1/statistic",
+        ghttp::HttpMethod::POST,
+        [](ghttp::CRequest* req, ghttp::CResponse* rsp) {
+            std::map<std::string, std::map<int64_t, int64_t>> smap;
+            try {
+                auto conn = CMongo::Instance().Conn();
+                mongocxx::v_noabi::collection col = (*conn)[MYARGS.DbName[0]][MYARGS.DbColl[0][0]];
+                auto query = bsoncxx::builder::basic::document {};
+                auto cursor = col.find(query.view());
+                for (auto&& doc : cursor) {
+                    if (auto it = doc.find("value"); it != doc.end()) {
+                        std::string_view value = it->get_utf8();
+                        auto j = nlohmann::json::parse(value);
+                        for (auto& [k, v] : j.items()) {
+                            if (k == "GameLevel" && v["value"].is_number()) {
+                                smap[k][v["value"]] = smap[k][v["value"]] + 1;
+                            }
+                        }
+                    }
+                }
+            } catch (const std::exception& e) {
+                SPDLOG_ERROR("CTX:{} /game/v1/logevent exception {}", MYARGS.CTXID, e.what());
+                return rsp->Response({ ghttp::HttpStatusCode::INTERNAL, e.what() });
+            }
+
+            nlohmann::json js(smap);
             return rsp->Response({ ghttp::HttpStatusCode::OK, js.dump() });
         });
 
     srv->Register(
-        "/game/v1/rpc",
+        "/game/debug/rpc",
         ghttp::HttpMethod::POST,
         [](ghttp::CRequest* req, ghttp::CResponse* rsp) {
-            auto v = req->GetHeaderByKey("authorization").value_or("");
-            auto auth = std::string(v.data(), v.size());
+            auto auth = req->GetHeaderByKey("authorization");
             ghttp::CResponse* r = rsp->Clone();
-            CHTTPClient::Emit("https://dev.wgnice.com:9021/game/v1/getuser",
+            CHTTPClient::Emit(MYARGS.ConfMap["test_rpcurl"],
                 [r](ghttp::CResponse* response) {
-                    if (response->GetBody()) {
-                        r->Response({ response->GetStatus().value(), std::string(response->GetBody().value().data(), response->GetBody().value().length()) });
-                        delete r;
-                    }
+                    r->Response({ response->GetStatus().value(), std::string(response->GetBody().value_or("").data(), response->GetBody().value_or("").length()) });
+                    delete r;
                     return true;
                 },
                 ghttp::HttpMethod::POST,
                 std::nullopt,
-                { { "authorization", auth.data() } });
+                {
+                    { "authorization", auth },
+                });
             return false;
         });
 
-    srv->ServeWs("/game/ws", [](CWebSocket* ws, std::string_view data) {
-        std::string d(data.data(), data.length());
-        CINFO("websocket on data %s", d.c_str());
+    srv->ServeWs("/game/debug/ws", [](CWebSocket* ws, std::string_view data) {
+        SPDLOG_DEBUG("websocket on data {}", data);
         ws->SendCmd(CWSParser::WS_OPCODE_TXTFRAME, data);
         return true;
     });
 
     srv->Register(
-        "/game/wscli",
+        "/game/debug/wscli",
         ghttp::HttpMethod::POST,
         [](ghttp::CRequest* req, ghttp::CResponse* rsp) {
-            std::string url = "wss://access.indigames.in:9028";
+            std::string url = MYARGS.ConfMap["test_wsurl"];
             CWebSocket::Connect(url, [](CWebSocket*, std::string_view data) {
-                std::string d(data.data(), data.length());
-                CINFO("websocket on data %s", d.c_str());
+                SPDLOG_DEBUG("websocket on data {}", data);
                 return true;
             });
             return rsp->Response({ ghttp::HttpStatusCode::OK, "OK" });
         });
+
+    srv->Register(
+        "/game/debug/lua",
+        ghttp::HttpMethod::DISABLE,
+        [](ghttp::CRequest* req, ghttp::CResponse* rsp) {
+            CLuaState::MAIN_LUASTATE->PushFunc("Dispatch");
+            CLuaState::MAIN_LUASTATE->PushInteger(req->GetUid().value_or(0));
+            CLuaState::MAIN_LUASTATE->PushInteger(0);
+            CLuaState::MAIN_LUASTATE->PushInteger(0);
+            CLuaState::MAIN_LUASTATE->PushInteger(0);
+            CLuaState::MAIN_LUASTATE->PushString(req->GetBody());
+            auto&& res = CLuaState::MAIN_LUASTATE->Call<std::string>(5, 1);
+            return rsp->Response({ ghttp::HttpStatusCode::OK, res });
+        });
+
+    srv->Register(
+        "/game/debug/echo",
+        ghttp::HttpMethod::GETPOST,
+        [](ghttp::CRequest* req, ghttp::CResponse* rsp) {
+            return rsp->Response({ ghttp::HttpStatusCode::OK, req->GetBody() });
+        });
+
+    srv->Register(
+        "/helloworld.Greeter/SayHello",
+        ghttp::HttpMethod::POST,
+        [](ghttp::CRequest* req, ghttp::CResponse* rsp) {
+            helloworld::HelloRequest hello;
+            if (hello.ParseFromString(req->GetBody())) {
+                SPDLOG_DEBUG("Grpc on data {}", hello.name());
+            }
+            helloworld::HelloReply reply;
+            reply.set_message(fmt::format("hello {}", hello.name()));
+            return rsp->Response({ ghttp::HttpStatusCode::OK, reply.SerializeAsString() });
+        });
+
+    srv->Register(
+        "/game/debug/grpc",
+        ghttp::HttpMethod::POST,
+        [](ghttp::CRequest* req, ghttp::CResponse* rsp) {
+            auto auth = req->GetHeaderByKey("authorization");
+            ghttp::CResponse* r = rsp->Clone();
+            helloworld::HelloRequest hello;
+            hello.set_name("Submits GOAWAY frame with the last stream ID last_stream_id and the error code error_code.\
+            Submits GOAWAY frame with the last stream ID last_stream_id and the error code error_code.\
+            Submits GOAWAY frame with the last stream ID last_stream_id and the error code error_code.\
+            Submits GOAWAY frame with the last stream ID last_stream_id and the error code error_code.\
+            Submits GOAWAY frame with the last stream ID last_stream_id and the error code error_code.\
+            Submits GOAWAY frame with the last stream ID last_stream_id and the error code error_code.\
+            Submits GOAWAY frame with the last stream ID last_stream_id and the error code error_code.\
+            Submits GOAWAY frame with the last stream ID last_stream_id and the error code error_code.\
+            Submits GOAWAY frame with the last stream ID last_stream_id and the error code error_code.\
+            Submits GOAWAY frame with the last stream ID last_stream_id and the error code error_code.\
+            Submits GOAWAY frame with the last stream ID last_stream_id and the error code error_code.\
+            Submits GOAWAY frame with the last stream ID last_stream_id and the error code error_code.\
+            Submits GOAWAY frame with the last stream ID last_stream_id and the error code error_code.\
+            Submits GOAWAY frame with the last stream ID last_stream_id and the error code error_code.\
+            Submits GOAWAY frame with the last stream ID last_stream_id and the error code error_code.\
+            Submits GOAWAY frame with the last stream ID last_stream_id and the error code error_code.\
+            Submits GOAWAY frame with the last stream ID last_stream_id and the error code error_code.\
+            Submits GOAWAY frame with the last stream ID last_stream_id and the error code error_code.\
+            Submits GOAWAY frame with the last stream ID last_stream_id and the error code error_code.\
+            Submits GOAWAY frame with the last stream ID last_stream_id and the error code error_code.\
+            Submits GOAWAY frame with the last stream ID last_stream_id and the error code error_code.\
+            Submits GOAWAY frame with the last stream ID last_stream_id and the error code error_code.\
+            Submits GOAWAY frame with the last stream ID last_stream_id and the error code error_code.\
+            Submits GOAWAY frame with the last stream ID last_stream_id and the error code error_code.\
+            Submits GOAWAY frame with the last stream ID last_stream_id and the error code error_code.\
+            Submits GOAWAY frame with the last stream ID last_stream_id and the error code error_code.\
+            Submits GOAWAY frame with the last stream ID last_stream_id and the error code error_code.\
+            Submits GOAWAY frame with the last stream ID last_stream_id and the error code error_code.\
+            Submits GOAWAY frame with the last stream ID last_stream_id and the error code error_code.\
+            Submits GOAWAY frame with the last stream ID last_stream_id and the error code error_code.\
+            Submits GOAWAY frame with the last stream ID last_stream_id and the error code error_code.\
+            Submits GOAWAY frame with the last stream ID last_stream_id and the error code error_code.\
+            Submits GOAWAY frame with the last stream ID last_stream_id and the error code error_code.\
+            Submits GOAWAY frame with the last stream ID last_stream_id and the error code error_code.\
+            Submits GOAWAY frame with the last stream ID last_stream_id and the error code error_code.\
+            Submits GOAWAY frame with the last stream ID last_stream_id and the error code error_code.\
+            Submits GOAWAY frame with the last stream ID last_stream_id and the error code error_code.\
+            Submits GOAWAY frame with the last stream ID last_stream_id and the error code error_code.\
+            Submits GOAWAY frame with the last stream ID last_stream_id and the error code error_code.\
+            Submits GOAWAY frame with the last stream ID last_stream_id and the error code error_code.\
+            Submits GOAWAY frame with the last stream ID last_stream_id and the error code error_code.\
+            ");
+            CHTTPClient::Emit(MYARGS.ConfMap["test_grpcurl"],
+                [r](ghttp::CResponse* response) {
+                    helloworld::HelloRequest hello;
+                    hello.ParseFromArray(response->GetBody().value_or("").data(), response->GetBody().value_or("").length());
+                    r->Response({ response->GetStatus().value(), hello.name() });
+                    delete r;
+                    return true;
+                },
+                ghttp::HttpMethod::POST,
+                hello.SerializeAsString(),
+                {
+                    { "authorization", auth },
+                    { "content-type", "application/grpc" },
+                    { "te", "trailers" },
+                    { "grpc-encoding", "identity" },
+                    { "user-agent", "grpc-c++/1.46.3 grpc-c/24.0.0 (linux; chttp2)" },
+                });
+            return false;
+        });
 }
 
-void CApp::CommandRegister(std::map<std::string, CommandSyncFunc>& ref)
+void CApp::CommandRegister(CApp::AppWorker* w)
 {
-    ref["UpdateUser"] = [](const nlohmann::json& j) {
-        if (j.contains("uid") && j["uid"].is_number_integer()) {
-            CLocalStoreage<int64_t>::Instance().Remove("user", j["uid"].get<int64_t>());
-        }
-        return true;
-    };
+    w->RegisterCommand("UpdateUser",
+        [](const nlohmann::json& j) {
+            if (j.contains("uid") && j["uid"].is_number_integer()) {
+                CLocalStorage<int64_t>::Instance().Remove("user", j["uid"].get<int64_t>());
+            }
+            return true;
+        });
 }

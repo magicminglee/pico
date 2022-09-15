@@ -16,7 +16,7 @@ bool CConnectionHandler::init(const int32_t fd, bufferevent_data_cb rcb, buffere
 {
     CConnection* c = (CConnection*)(Connection());
     CheckCondition(c, false);
-    c->m_bev = CWorker::MAIN_CONTEX->Bvsocket(fd, rcb, wcb, ecb, this, ssl, accept);
+    c->m_bev = CContex::MAIN_CONTEX->Bvsocket(fd, rcb, wcb, ecb, this, ssl, accept);
     CheckCondition(c->IsValide(), false);
 
     struct sockaddr_storage addr;
@@ -60,12 +60,34 @@ void CConnectionHandler::Register(CReadCBFunc readcb, CWriteCBFunc writecb, CEve
     m_event_callback = eventcb;
 }
 
+bool CConnectionHandler::InitProxy(const std::string& hostname)
+{
+    auto bv = bufferevent_openssl_filter_new(CContex::MAIN_CONTEX->Base(),
+        Connection()->GetBufEvent(), CSSLContex::Instance().CreateOneSSL(false, hostname),
+        BUFFEREVENT_SSL_CONNECTING,
+        BEV_OPT_CLOSE_ON_FREE);
+
+    bufferevent_setcb(bv, onRead, onWrite, onError, this);
+    Connection()->SetBufferEvent(bv);
+    return true;
+}
+
+bool CConnectionHandler::EnableProxy()
+{
+    if (-1 == bufferevent_enable(Connection()->GetBufEvent(), EV_READ | EV_WRITE)) {
+        SPDLOG_ERROR("{} bufferevent_enable", __FUNCTION__);
+        return false;
+    }
+    bufferevent_setwatermark(Connection()->GetBufEvent(), EV_READ | EV_WRITE, 0, MAX_WATERMARK_SIZE * 4);
+    return true;
+}
+
 bool CConnectionHandler::Init(const int32_t fd, const std::string host)
 {
     auto [schema, hostname, port, path] = CConnection::SplitUri(host);
     SSL* ssl = nullptr;
     if (schema == "https" || schema == "wss") {
-        ssl = CSSLContex::Instance().CreateOneSSL(fd > 0);
+        ssl = CSSLContex::Instance().CreateOneSSL(fd > 0, hostname);
     }
     m_conn.reset(CNEW CConnection());
     m_conn->SetStreamTypeBySchema(schema);
@@ -74,18 +96,8 @@ bool CConnectionHandler::Init(const int32_t fd, const std::string host)
 
 void CConnectionHandler::onRead(struct bufferevent* bev, void* arg)
 {
-    static thread_local char* buffer = { nullptr };
-    if (!buffer)
-        buffer = CNEW char[MAX_WATERMARK_SIZE];
     CConnectionHandler* self = (CConnectionHandler*)arg;
     struct evbuffer* input = bufferevent_get_input(bev);
-    size_t len = evbuffer_get_length(input);
-    if (len <= 0 || len >= MAX_WATERMARK_SIZE) {
-        CERROR("%p,%ld Buffer is overflow!", self, self->Connection()->Id());
-        if (self->m_event_callback)
-            self->m_event_callback(EnumConnEventType::EnumConnEventType_Closed);
-        return;
-    }
     if (self->m_read_callback) {
         auto data = (char*)evbuffer_pullup(input, -1);
         auto dlen = evbuffer_get_length(input);
@@ -95,8 +107,10 @@ void CConnectionHandler::onRead(struct bufferevent* bev, void* arg)
             evbuffer_drain(input, readlen);
         } else if (readlen == 0) {
         } else {
-            if (self->m_event_callback)
+            if (self->m_event_callback) {
                 self->m_event_callback(EnumConnEventType::EnumConnEventType_Closed);
+                self->m_event_callback = nullptr;
+            }
             CDEL(self);
         }
     }
@@ -106,9 +120,12 @@ void CConnectionHandler::onWrite(struct bufferevent* bev, void* arg)
 {
     CConnectionHandler* self = (CConnectionHandler*)arg;
     if (self->m_conn->IsClosing()) {
-        CINFO("CTX:%s %s need to recycle %p,%ld,%p", MYARGS.CTXID.c_str(), __FUNCTION__, self->m_conn.get(), self->m_conn->Id(), bev);
-        if (self->m_event_callback)
+        SPDLOG_INFO("CTX:{} {} need to recycle {}, {}, {}", MYARGS.CTXID, __FUNCTION__, fmt::ptr(self->m_conn.get()), self->m_conn->Id(), fmt::ptr(bev));
+        if (self->m_event_callback) {
             self->m_event_callback(EnumConnEventType::EnumConnEventType_Closed);
+            self->m_event_callback = nullptr;
+        }
+        CDEL(self);
     } else {
         if (self->m_write_callback) {
             self->m_write_callback();
@@ -120,16 +137,23 @@ void CConnectionHandler::onError(struct bufferevent* bev, short which, void* arg
 {
     CConnectionHandler* self = (CConnectionHandler*)arg;
     if (which & BEV_EVENT_CONNECTED) {
-        if (self->m_event_callback)
+        if (self->m_event_callback) {
+            if (bufferevent_openssl_get_ssl(bev)) {
+                bufferevent_enable(bev, EV_READ | EV_WRITE);
+                bufferevent_setwatermark(bev, EV_READ | EV_WRITE, 0, MAX_WATERMARK_SIZE * 4);
+            }
             self->m_event_callback(EnumConnEventType::EnumConnEventType_Connected);
+        }
         return;
     } else if (which & BEV_EVENT_EOF) {
     } else if (which & BEV_EVENT_ERROR) {
     } else if (which & BEV_EVENT_TIMEOUT) {
     }
-    CINFO("CTX:%s %s %p,%ld,0x%x,%p", MYARGS.CTXID.c_str(), __FUNCTION__, self->m_conn.get(), self->m_conn->Id(), which, bev);
-    if (self->m_event_callback)
+    SPDLOG_INFO("CTX:{} {} {},{},0x{:x},{}", MYARGS.CTXID, __FUNCTION__, fmt::ptr(self->m_conn.get()), self->m_conn->Id(), which, fmt::ptr(bev));
+    if (self->m_event_callback) {
         self->m_event_callback(EnumConnEventType::EnumConnEventType_Closed);
+        self->m_event_callback = nullptr;
+    }
     CDEL(self);
 }
 

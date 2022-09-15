@@ -14,7 +14,7 @@ namespace redis {
         redisReply* reply = (redisReply*)r;
         if (!reply) {
             if (c->errstr) {
-                CERROR("%s: %s", __FUNCTION__, c->errstr);
+                SPDLOG_ERROR("{}: {}", __FUNCTION__, c->errstr);
             }
             return;
         }
@@ -28,7 +28,7 @@ namespace redis {
         m_async_handlemgr.clear();
         for (auto&& v : MYARGS.RedisUrl) {
             m_handlemgr.push_back(sw::redis::Redis(v));
-            //addAsyncOne(v);
+            // addAsyncOne(v);
         }
         return true;
     }
@@ -54,7 +54,7 @@ namespace redis {
             RedisPrivateData* rpd = CNEW RedisPrivateData { .callback = std::move(callback) };
             status = redisvAsyncCommand(AsynHandle(id), replyCallback, rpd, format, ap);
             if (status != REDIS_OK && rpd) {
-                CERROR("%s: %d", __FUNCTION__, status);
+                SPDLOG_ERROR("{}: {}", __FUNCTION__, status);
                 CDEL(rpd);
             }
         } else {
@@ -106,7 +106,7 @@ namespace redis {
                             throw sw::redis::ProtoError("Null message reply");
                         }
                         auto msg = sw::redis::reply::parse<std::string>(*msg_reply);
-                        //CINFO("message %s %s", channel.c_str(), msg.c_str());
+                        // SPDLOG_INFO("message {} {}", channel, msg);
                         if (onmsg)
                             onmsg(type, channel, msg);
                     } break;
@@ -134,7 +134,7 @@ namespace redis {
                             throw sw::redis::ProtoError("Null message reply");
                         }
                         auto msg = sw::redis::reply::parse<std::string>(*msg_reply);
-                        //CINFO("pmessage %s %s %s", pattern.c_str(), channel.c_str(), msg.c_str());
+                        // SPDLOG_INFO("pmessage {} {} {}", pattern, channel, msg);
                         if (onmsg)
                             onmsg(type, channel, msg);
                     } break;
@@ -159,7 +159,7 @@ namespace redis {
                             throw sw::redis::ProtoError("Null num reply");
                         }
                         auto num = sw::redis::reply::parse<long long>(*num_reply);
-                        CINFO("meta %s %s %lld", type.c_str(), channel.value_or("").c_str(), num);
+                        SPDLOG_INFO("meta {} {} {}", type, channel.value_or(""), num);
                         if (onmeta)
                             onmeta(type, channel.value_or(""), num);
                     } break;
@@ -167,28 +167,28 @@ namespace redis {
                         assert(false);
                     }
                 } catch (const sw::redis::ProtoError& e) {
-                    CERROR("%s %s", __FUNCTION__, e.what());
+                    SPDLOG_ERROR("{} {}", __FUNCTION__, e.what());
                 }
             },
-            "SUBSCRIBE %s", channel.c_str());
+            "SUBSCRIBE {}", channel.c_str());
     }
 
     void CRedisMgr::connectCallback(const redisAsyncContext* c, int32_t status)
     {
         if (status != REDIS_OK) {
-            CERROR("Error: %s", c->errstr);
+            SPDLOG_ERROR("Error: {}", c->errstr);
             return;
         }
-        CINFO("Connected...");
+        SPDLOG_INFO("Connected...");
     }
 
     void CRedisMgr::disconnectCallback(const redisAsyncContext* c, int32_t status)
     {
         if (status != REDIS_OK) {
-            CERROR("Error: %s", c->errstr);
+            SPDLOG_ERROR("Error: {}", c->errstr);
             return;
         }
-        CINFO("Disconnected...");
+        SPDLOG_INFO("Disconnected...");
     }
 
     void CRedisMgr::privdataFree(void* privdata)
@@ -214,7 +214,7 @@ namespace redis {
         if (c->err)
             return false;
 
-        redisLibeventAttach(c, CWorker::MAIN_CONTEX->Base());
+        redisLibeventAttach(c, CContex::MAIN_CONTEX->Base());
         redisAsyncSetConnectCallback(c, connectCallback);
         redisAsyncSetDisconnectCallback(c, disconnectCallback);
         if (!privdata->password.empty())
@@ -226,4 +226,4 @@ namespace redis {
         return true;
     }
 }
-} //end namespace redis
+} // end namespace redis
